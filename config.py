@@ -51,7 +51,11 @@ KEEP_ALIVE_INTERVAL = _get_int("MQTT_KEEPALIVE_INTERVAL", 60)
 # Topic / device identity (used for Home Assistant discovery)
 VERSION = os.getenv("MQTT_VERSION", "1.0.0")
 IDENTIFIER = os.getenv("MQTT_IDENTIFIER", "gardyn-xx")
-MODEL = os.getenv("MQTT_DEVICE_MODEL", "gardyn 3.0")
+# MQTT_DEVICE_MODEL names the unit in Home Assistant discovery. It is also the
+# last-resort fallback for detect_model() when nothing can be inferred, so an
+# empty value falls back to the base model profile rather than naming a
+# generation this install may not be.
+MODEL = os.getenv("MQTT_DEVICE_MODEL", "").strip()
 BASE_TOPIC = os.getenv("MQTT_BASETOPIC", "gardyn")
 
 USERNAME = os.getenv("MQTT_USERNAME")

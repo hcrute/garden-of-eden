@@ -9,7 +9,7 @@ of opening its own (see issue #67).
 import logging
 
 import config
-from app.lib.models import profile_for  # re-exported for the /system route
+from app.lib.models import model_for_sensor, profile_for  # re-exported for /system
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +122,12 @@ def detect_model():
     if config.MODEL_OVERRIDE:
         return config.MODEL_OVERRIDE
 
-    # The temp/humidity chip distinguishes generations: DHT20 -> 3.0+,
-    # AM2320 -> 1.0/2.0. AM2320 needs a wakeup and won't always ACK, so we
-    # also fall back to the configured SENSOR_TYPE.
-    if i2c_device_present(DHT20_ADDRESS) or config.SENSOR_TYPE == "DHT20":
-        return "gardyn 3.0"
-    if config.SENSOR_TYPE == "AM2320":
-        return "gardyn 2.0"
-    return config.MODEL
+    # The temp/humidity chip is the only hardware clue available. Which model it
+    # implies lives in the model table, not here, so a new model only has to
+    # declare its own chip. AM2320 needs a wakeup and won't always ACK, so the
+    # configured SENSOR_TYPE stands in for a failed probe.
+    sensor = "DHT20" if i2c_device_present(DHT20_ADDRESS) else config.SENSOR_TYPE
+    return model_for_sensor(sensor) or config.MODEL
 
 
 def lower_camera_enabled(model=None):

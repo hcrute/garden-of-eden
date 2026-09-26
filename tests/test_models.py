@@ -59,6 +59,21 @@ class ModelDefaultsTestCase(unittest.TestCase):
                 self.assertIsNone(cls.temp_humidity)
                 self.assertNotIn("temp_humidity", cls.profile())
 
+    def test_sensor_hints_resolve_to_registered_models(self):
+        # The sensor -> model mapping must live in the model table, not in the
+        # detection code, so adding a model does not mean editing detect_model.
+        for sensor, name in models.SENSOR_MODEL_HINTS.items():
+            with self.subTest(sensor=sensor):
+                self.assertIn(name, models.MODELS)
+                self.assertEqual(models.model_for_sensor(sensor), name)
+
+    def test_unknown_sensor_resolves_to_nothing(self):
+        # Returning None lets the caller fall back deliberately rather than
+        # guessing at a model.
+        for sensor in (None, "", "SHT31", "bogus"):
+            with self.subTest(sensor=sensor):
+                self.assertIsNone(models.model_for_sensor(sensor))
+
     def test_registry_covers_every_generation(self):
         self.assertEqual(
             set(models.MODELS),

@@ -99,18 +99,29 @@ class WebUITestCase(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, html)
 
-    def test_pods_grid_is_two_up_and_interleaved(self):
+    def test_pods_grid_width_follows_the_tower_count(self):
         html = self.client.get("/").data.decode()
-        # One row per tower level, two pods across: max 2 panes per row.
-        self.assertIn("grid-template-columns:repeat(2,1fr)", html)
+        # The grid must be as wide as the unit has towers -- 3 across on a Home
+        # line, 2 on a Studio -- rather than a hardcoded 2 that silently crops
+        # a wider unit into a wrong shape.
+        self.assertIn("repeat(var(--pod-cols,2),1fr)", html)
         self.assertNotIn("podwrap", html)
-        # Display order must interleave left/right per level rather than
-        # reading down one column and then the other.
+        # ...and the value has to actually be set from /pods at render time.
+        self.assertIn('setProperty("--pod-cols", columns)', html)
+        # Display order must interleave across towers per level rather than
+        # reading down one tower and then the next.
         self.assertIn("function podOrder()", html)
         order = html[html.index("function podOrder()") :]
         order = order[: order.index("function renderPods(")]
         self.assertIn("col <= columns", order)
         self.assertIn("level", order)
+
+    def test_camera_grid_width_follows_the_camera_count(self):
+        html = self.client.get("/").data.decode()
+        # A one-camera unit (the Studio line) must not leave half the card empty
+        # beside a hidden lower camera.
+        self.assertIn("repeat(var(--cam-cols,2),1fr)", html)
+        self.assertIn('setProperty("--cam-cols", lowerCameraEnabled ? 2 : 1)', html)
 
     def test_advice_send_never_fails_silently(self):
         html = self.client.get("/").data.decode()

@@ -119,6 +119,25 @@ class GardynStudio2(GardynStudio):
 # Known models keyed by their reported name.
 MODELS = {m.name: m for m in (Gardyn1, Gardyn2, Gardyn3, Gardyn4, GardynStudio, GardynStudio2)}
 
+# Which model to infer when the only clue is the temp/humidity chip. This lives
+# here rather than in hardware.detect_model so that adding a model does not mean
+# editing the detection code.
+#
+# Two limits worth knowing: both AM2320 generations report the same chip, so the
+# more capable one is named; and both hardware lines ship DHT20, so this cannot
+# tell a Studio from a Home 3.0 at all. Anything the chip cannot resolve is
+# better set explicitly -- in .env or from the Settings card in the web UI.
+SENSOR_MODEL_HINTS = {"DHT20": "gardyn 3.0", "AM2320": "gardyn 2.0"}
+
+
+def model_for_sensor(sensor):
+    """The model implied by a temp/humidity chip, or None if unrecognised.
+
+    Returns None rather than a guess, so the caller can fall back deliberately.
+    """
+    name = SENSOR_MODEL_HINTS.get(sensor or "")
+    return name if name in MODELS else None
+
 
 def model_for(model):
     """Resolve a model string to a model class.

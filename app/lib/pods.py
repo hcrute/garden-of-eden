@@ -2,8 +2,10 @@
 sequence of geometric symbols) that mirrors the glyphs printed on the physical
 Gardyn pod, so you can match a row in the UI to a pod in the tower.
 
-State is a list of POD_COUNT pods persisted as JSON. Unknown shapes and overlong
-names/codes are dropped on normalize so the file can't drift out of spec.
+State is a list of pods, one per plant port, persisted as JSON. The count
+follows the detected model (see ``hardware.pod_capacity``). Unknown shapes and
+overlong names/codes are dropped on normalize so the file can't drift out of
+spec.
 """
 
 import json
