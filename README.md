@@ -104,6 +104,7 @@ See [`docs/simulator.md`](docs/simulator.md).
   - [Table of Contents](#table-of-contents)
   - [Getting Started](#getting-started)
     - [Prerequisites](#prerequisites)
+    - [Services and Scheduled Jobs](#services-and-scheduled-jobs)
   - [Usage](#usage)
     - [MQTT with HomeAssistant](#mqtt-with-homeassistant)
     - [Testing](#testing)
@@ -112,7 +113,7 @@ See [`docs/simulator.md`](docs/simulator.md).
     - [REST API](#rest-api)
       - [Endpoints](#endpoints)
       - [Postman](#postman)
-    - [Cron Job](#cron-job)
+    - [Scheduled Jobs (cron)](#scheduled-jobs-cron)
   - [Hardware Overview](#hardware-overview)
     - [Air Temp \& Humidity Sensor](#air-temp--humidity-sensor)
     - [Pump Power Monitor](#pump-power-monitor)
@@ -173,6 +174,31 @@ Ensure the pigpiod daemon is running
 sudo systemctl status pigpiod
 sudo systemctl status mqtt.service
 ```
+
+### Services and Scheduled Jobs
+
+`./bin/setup.sh` installs and enables everything the unit needs at boot:
+
+| Unit | What it does |
+|---|---|
+| `pigpiod` | GPIO daemon; every driver talks to it |
+| `mqtt.service` | `mqtt.py` — MQTT control, Home Assistant discovery, image publisher |
+| `garden-api.service` | REST API + web UI, served by Waitress on port 5000 |
+| `garden-autoupdate.timer` | nightly `bin/update.sh` |
+
+Confirm they are up:
+
+```bash
+sudo systemctl status garden-api.service mqtt.service
+curl -s http://localhost:5000/health      # {"status":"ok"}
+sudo journalctl -u garden-api.service -n 40 --no-pager
+```
+
+The lights and pump schedule is **not** a service — it is cron, managed by the
+Schedule card in the web UI. See [Scheduled Jobs (cron)](#scheduled-jobs-cron)
+below. `setup.sh` also symlinks the two commands that schedule depends on into
+`/usr/local/bin`; without those the schedule fails silently, so check them if
+your lights and pump never run.
 
 ## Usage
 
@@ -414,34 +440,52 @@ python run.py
 
 Export this [Postman collection](https://www.postman.com/orange-shadow-8689/workspace/garden-of-eden/collection/8244324-e9d8f79e-d3f2-423e-b0d1-a4ca5b1b08ca?action=share&creator=8244324&active-environment=8244324-861384b4-b4e3-48a3-8da1-181705bd2d8c), add to your private workspace, add the `pi-ip` env variable and you should be good to go.
 
-### Cron Job
+### Scheduled Jobs (cron)
 
-Run `crontab -e`, select your preferred editor and then add the following job. Edit as needed.
-
-> Note: update your paths for the following...
+**Do not hand-write crontab entries for lights or pump.** The Schedule card in
+the web UI (or `POST /schedule`) compiles your saved schedule into crontab lines
+tagged with `# garden-of-eden` and rewrites only those, so it owns them from then
+on. What it generates looks like this:
 
 ```text
-# †urn on lights at 6am, 9am, 5pm, and turn off at 8pm
-0 6 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/light/light.py --on --brightness 50
-0 9 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/light/light.py --on --brightness 70
-0 17 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/light/light.py --on --brightness 50
-0 20 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/light/light.py --off
-
-# Pump run at 8am for 5 minutes
-0 8 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/pump/pump.py --on --speed 100
-5 8 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/pump/pump.py --off
-
-# Pump run at 4pm 5 minutes
-0 16 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/pump/pump.py --on --speed 100
-5 16 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/pump/pump.py --off
-
-# Pump run at 9pm for 5 minutes
-0 21 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/pump/pump.py --on --speed 100
-5 21 * * * /home/gardyn/projects/garden-of-eden/venv/bin/python /home/gardyn/projects/garden-of-eden/app/sensors/pump/pump.py --off
-
-# Collect sensor data every 30 mins
-*/30 * * * * /home/gardyn/projects/garden-of-eden/bin/get-sensor-data.sh
+0 6 * * 1 /usr/local/bin/light ramp 30 15 # garden-of-eden
+0 22 * * 1 /usr/local/bin/light ramp 0 15 # garden-of-eden
+0 6 * * 1 /usr/local/bin/water 180 # garden-of-eden
+0 12 * * 1 /usr/local/bin/water 180 # garden-of-eden
 ```
+
+Those two commands are symlinks created by `bin/setup.sh`:
+
+```bash
+sudo ln -fs ~/garden-of-eden/bin/light.sh /usr/local/bin/light
+sudo ln -fs ~/garden-of-eden/bin/water.sh /usr/local/bin/water
+```
+
+> **If those symlinks are missing, cron still fires every job and every one
+> fails with `No such file or directory` — silently.** Nothing appears in the
+> web UI and cron mails nobody, so the schedule keeps showing as saved and
+> enabled while nothing actually runs. If your lights and pump never seem to
+> fire, check this first:
+
+```bash
+ls -la /usr/local/bin/light /usr/local/bin/water
+journalctl -u cron | tail -20
+```
+
+The web UI reports a **"Schedule is not running"** banner when these commands
+are missing, so this failure should now be visible rather than silent.
+
+To confirm a job works before waiting a day for it, run it by hand. Note these
+drive real hardware:
+
+```bash
+/usr/local/bin/light 30      # set brightness to 30%
+/usr/local/bin/water 180     # run the pump for 3 minutes
+/usr/local/bin/light          # no argument prints usage and touches nothing
+```
+
+To remove the schedule, clear it in the web UI rather than deleting lines from
+`crontab -e`, so the saved state and the crontab stay in agreement.
 
 ## Hardware Overview
 
