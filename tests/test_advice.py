@@ -108,6 +108,7 @@ class SnapshotTestCase(unittest.TestCase):
             "actuators",
             "schedule",
             "recent_warnings",
+            "plants",
             "grow",
         ):
             self.assertIn(key, state)
@@ -152,6 +153,103 @@ class BuildContentTestCase(unittest.TestCase):
             content = groq.build_content("hello", include_image=False)
         mock_img.assert_not_called()
         self.assertEqual([b["type"] for b in content], ["text"])
+
+
+class PlantSummaryTestCase(unittest.TestCase):
+    """The plant configuration has to reach the prompt, grouped usefully.
+
+    Sixteen pods is usually only a handful of distinct varieties, so grouping
+    keeps the prompt small while still listing every pod id and position. The
+    position is what makes the difference between "this tomato is unhappy" and
+    "this tomato wants high light and is sitting at level 5".
+    """
+
+    CATALOG = [
+        {
+            "name": "Spinach",
+            "category": "leafy-green/lettuce",
+            "light_need": "medium",
+            "days_to_harvest": "30-45",
+            "difficulty": "easy",
+            "guide": "long text we must not send",
+        },
+        {
+            "name": "Orange Hat Tomato",
+            "category": "fruiting",
+            "light_need": "high",
+            "days_to_harvest": "70-80",
+            "difficulty": "hard",
+            "guide": "more long text",
+        },
+    ]
+
+    def _run(self, pods):
+        from app.lib import pods as pods_lib
+
+        positioned = pods_lib.with_positions(pods_lib.normalize(pods))
+        with (
+            patch.object(pods_lib, "load_pods", return_value=positioned),
+            patch.object(pods_lib, "load_catalog", return_value=self.CATALOG),
+        ):
+            return groq.plant_summary()
+
+    def test_groups_repeated_varieties_with_positions(self):
+        summary = self._run(
+            [
+                {"id": 1, "name": "Spinach"},
+                {"id": 2, "name": "Orange Hat Tomato"},
+                {"id": 3, "name": "Spinach"},
+            ]
+        )
+        self.assertEqual(summary["pods_planted"], 3)
+        by_name = {v["name"]: v for v in summary["varieties"]}
+        self.assertEqual(sorted(by_name), ["Orange Hat Tomato", "Spinach"])
+        self.assertEqual(by_name["Spinach"]["count"], 2)
+        self.assertEqual([p["id"] for p in by_name["Spinach"]["pods"]], [1, 3])
+        # Every pod carries a derived position, not just an id.
+        first = by_name["Spinach"]["pods"][0]
+        for key in ("tower", "level", "side"):
+            self.assertIn(key, first)
+
+    def test_carries_catalog_attributes(self):
+        summary = self._run([{"id": 1, "name": "Orange Hat Tomato"}])
+        tomato = summary["varieties"][0]
+        self.assertEqual(tomato["light_need"], "high")
+        self.assertEqual(tomato["category"], "fruiting")
+        self.assertEqual(tomato["days_to_harvest"], "70-80")
+        self.assertEqual(tomato["difficulty"], "hard")
+        self.assertTrue(tomato["in_catalog"])
+
+    def test_never_ships_the_catalog_guide_text(self):
+        # The catalog is ~112 entries; sending guide prose for every variety
+        # would swamp the prompt.
+        summary = self._run([{"id": 1, "name": "Spinach"}])
+        blob = json.dumps(summary)
+        self.assertNotIn("long text we must not send", blob)
+        self.assertNotIn("guide", summary["varieties"][0])
+
+    def test_unknown_variety_is_reported_but_flagged(self):
+        # A hand-typed name still reaches the model; it just knows less.
+        summary = self._run([{"id": 1, "name": "Grandma's Mystery Chilli"}])
+        entry = summary["varieties"][0]
+        self.assertEqual(entry["name"], "Grandma's Mystery Chilli")
+        self.assertFalse(entry["in_catalog"])
+        self.assertIsNone(entry["light_need"])
+
+    def test_empty_pods_are_not_listed_as_varieties(self):
+        summary = self._run([{"id": 1, "name": ""}, {"id": 2, "name": "Spinach"}])
+        self.assertEqual(summary["pods_planted"], 1)
+        self.assertEqual([v["name"] for v in summary["varieties"]], ["Spinach"])
+        self.assertGreaterEqual(summary["pods_total"], 1)
+
+    def test_no_pods_planted_yields_empty_varieties(self):
+        summary = self._run([{"id": 1, "name": ""}, {"id": 2, "name": ""}])
+        self.assertEqual(summary["pods_planted"], 0)
+        self.assertEqual(summary["varieties"], [])
+
+    def test_name_matching_ignores_case_and_padding(self):
+        summary = self._run([{"id": 1, "name": "  spinach "}])
+        self.assertTrue(summary["varieties"][0]["in_catalog"])
 
 
 class ScheduleSummaryTestCase(unittest.TestCase):

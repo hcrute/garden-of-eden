@@ -56,6 +56,14 @@ SYSTEM_PROMPT = (
     "for example a water level derived from a distance sensor that has "
     "stopped getting an echo means the sensor needs attention, not that the "
     "tank is empty.\n\n"
+    "The snapshot also lists plants: what is in each pod, grouped by variety, "
+    "with each pod's tower and level. Level 1 is the top of the tower, nearest "
+    "the grow light, so higher-numbered levels receive less light. Use that "
+    "when a plant is struggling: a variety that wants high light sitting low in "
+    "the tower is a different problem from the same variety at the top, and the "
+    "fix is different. A variety with in_catalog false is not in the plant "
+    "catalog, so you know less about it and should ask rather than assume its "
+    "needs.\n\n"
     "Answer with specific, actionable steps the operator can take on the "
     "machine: light level and duration, pump schedule and speed, water top-ups, "
     "nutrient timing, and what (if anything) needs attention right now. "
@@ -170,6 +178,67 @@ def schedule_summary():
     )
 
 
+def plant_summary():
+    """What is actually planted, and where in the tower.
+
+    Grouped by variety so that repeated plants (16 pods is usually only five or
+    six distinct varieties) cost one entry each, while every pod id and its
+    derived position is still listed.
+
+    The position matters horticulturally: level 1 is the top of the tower,
+    nearest the grow light, so it is the brightest pod. That is what lets the
+    model reason about a tomato bolting at the top while the chard below it is
+    perfectly happy, instead of treating the tower as undifferentiated.
+
+    Only the varieties actually assigned to a pod are described. The variety
+    catalog holds ~112 entries and would swamp the prompt.
+    """
+    from app.lib import pods as pods_lib
+
+    catalog = {}
+    for entry in pods_lib.load_catalog():
+        key = str(entry.get("name", "")).strip().lower()
+        if key:
+            catalog[key] = entry
+
+    assigned = [p for p in pods_lib.with_positions(pods_lib.load_pods()) if p["name"]]
+    grouped = {}
+    for pod in assigned:
+        grouped.setdefault(pod["name"], []).append(pod)
+
+    varieties = []
+    for name, pod_list in sorted(grouped.items()):
+        entry = catalog.get(name.strip().lower()) or {}
+        varieties.append(
+            {
+                "name": name,
+                "count": len(pod_list),
+                "pods": [
+                    {
+                        "id": p["id"],
+                        "tower": p["position"]["column"],
+                        "level": p["position"]["level"],
+                        "side": p["position"]["side"],
+                    }
+                    for p in pod_list
+                ],
+                "category": entry.get("category"),
+                "light_need": entry.get("light_need"),
+                "days_to_harvest": entry.get("days_to_harvest"),
+                "difficulty": entry.get("difficulty"),
+                # A hand-entered name that is not in the catalog still gets
+                # reported; the model just has less to go on.
+                "in_catalog": bool(entry),
+            }
+        )
+
+    return {
+        "pods_total": len(pods_lib.load_pods()),
+        "pods_planted": len(assigned),
+        "varieties": varieties,
+    }
+
+
 def _warning_lines(limit=8):
     """Recent warnings as one compact line each, for the prompt.
 
@@ -250,6 +319,9 @@ def snapshot():
         # Recent faults, so the model can separate a genuine problem from a
         # reading produced by a broken sensor.
         "recent_warnings": _read("recent warnings", _warning_lines),
+        # What is actually planted and where, so advice is about this garden
+        # rather than a generic one.
+        "plants": _read("plants", plant_summary),
         "grow": {
             "stage": grow.get("stage"),
             "days_elapsed": _days_since(grow.get("started")),
