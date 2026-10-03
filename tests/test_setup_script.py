@@ -1,0 +1,54 @@
+"""Static checks for bin/setup.sh.
+
+The install script only ever runs on a fresh Pi, so a syntax error or a dropped
+verification step would otherwise surface at install time and nowhere else.
+These are content and parse assertions rather than behaviour tests -- running
+setup.sh for real would install packages and write to /etc.
+"""
+
+import re
+import shutil
+import subprocess
+import unittest
+from pathlib import Path
+
+SETUP = Path(__file__).resolve().parent.parent / "bin" / "setup.sh"
+
+
+class SetupScriptTestCase(unittest.TestCase):
+    def setUp(self):
+        self.src = SETUP.read_text()
+
+    def test_parses(self):
+        """bash -n catches a malformed script without executing it."""
+        if shutil.which("bash") is None:  # pragma: no cover - POSIX only
+            self.skipTest("bash not available")
+        proc = subprocess.run(["bash", "-n", str(SETUP)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_verification_is_defined_and_called(self):
+        # Inline (?m): assertRegex's third positional arg is the failure
+        # message, not compile flags, so re.M there would be silently ignored.
+        self.assertRegex(self.src, r"(?m)^function verify_install \{")
+        # It has to run at the end of the install, not merely exist.
+        self.assertRegex(self.src, r"(?m)^verify_install$")
+
+    def test_verification_covers_the_schedule_commands(self):
+        body = re.search(r"^function verify_install \{.*?^\}", self.src, re.S | re.M).group(0)
+        for cmd in ("/usr/local/bin/light", "/usr/local/bin/water"):
+            self.assertIn(cmd, body, f"verification does not check {cmd}")
+        # Without these the scheduled jobs fail silently, so it must say so.
+        self.assertIn("schedule will NOT run", body)
+
+    def test_verification_fails_loudly(self):
+        body = re.search(r"^function verify_install \{.*?^\}", self.src, re.S | re.M).group(0)
+        self.assertIn("return 1", body)
+        self.assertIn("return 0", body)
+
+    def test_plan_mentions_the_verification_step(self):
+        plan = re.search(r"=== Garden of Eden setup.*?====", self.src, re.S).group(0)
+        self.assertIn("Verify", plan)
+
+
+if __name__ == "__main__":
+    unittest.main()

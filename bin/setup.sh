@@ -488,6 +488,69 @@ function verify_api {
     fi
 }
 
+# Post-install verification.
+#
+# Every step above can fail halfway: a sudo timeout, an interrupted run, a
+# package that installs but does not link. Nothing checked that any of it
+# actually landed, so a machine could look configured while the commands its
+# scheduled jobs call were never created -- and cron reports nothing, so the
+# lights and pump just quietly never run.
+#
+# Check what the install is supposed to have produced, and say plainly which
+# pieces are missing rather than leaving it to be discovered later.
+function verify_install {
+    local failed=0
+
+    log_info "Verifying the install"
+
+    # The commands the cron schedule calls. Without these, every scheduled
+    # light and pump job fails with "No such file or directory" and cron tells
+    # nobody, so they are the ones that matter most.
+    local link
+    for link in /usr/local/bin/light /usr/local/bin/water /usr/local/bin/garden-update; do
+        if [ -x "$link" ]; then
+            log_pass "$link -> $(readlink -f "$link")"
+        else
+            log_error "$link is missing or not executable."
+            failed=1
+        fi
+    done
+
+    # Units setup.sh installs. mqtt.service drives Home Assistant discovery;
+    # garden-api.service serves the web UI and REST API.
+    local unit
+    for unit in pigpiod.service mqtt.service garden-api.service garden-autoupdate.timer; do
+        local state enabled
+        state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+        enabled="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+        if [ "$state" = "active" ]; then
+            log_pass "$unit is active"
+        elif [ "$enabled" = "enabled" ]; then
+            log_error "$unit is enabled but not running ($state)."
+            failed=1
+        elif [ "$enabled" = "not-found" ] || [ "$state" = "not-found" ]; then
+            log_error "$unit was never installed."
+            failed=1
+        else
+            log_error "$unit is ${enabled}/${state}."
+            failed=1
+        fi
+    done
+
+    if [ ! -f "${INSTALL_DIR}/.env" ]; then
+        log_error "${INSTALL_DIR}/.env is missing; copy .env-dist and fill it in."
+        failed=1
+    fi
+
+    if [ "$failed" -ne 0 ]; then
+        log_error "Install verification found problems (see above). Re-run bin/setup.sh to repair."
+        log_info "Until /usr/local/bin/light and /usr/local/bin/water exist, the light and pump schedule will NOT run."
+        return 1
+    fi
+    log_pass "Install verified."
+    return 0
+}
+
 # Summarize the system-level changes before touching anything.
 function print_plan {
     local cfg
@@ -507,6 +570,8 @@ function print_plan {
   8. Install + enable systemd services: mqtt.service, garden-api.service
   9. Enable nightly auto-update timer (garden-autoupdate.timer, ~03:30) +
      a scoped sudoers rule to restart the two services unattended
+ 10. Verify: check the symlinks, units and .env actually landed, and report
+     anything missing (a partial install otherwise looks healthy)
 Reversible with: bin/uninstall.sh
 ============================================================
 
@@ -556,3 +621,4 @@ setup_mqtt_service
 setup_api_service
 setup_autoupdate
 verify_api
+verify_install
