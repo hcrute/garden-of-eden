@@ -369,7 +369,7 @@
         <label>Brightness</label>
         <input type="range" min="0" max="100" id="brightness" oninput="lbl('brightness')"
                onchange="post('/light/brightness', {value:+this.value}); setActive('light', +this.value>0)">
-        <span class="pct" id="brightness-val">50%</span>
+        <span class="pct" id="brightness-val">—</span>
       </div>
     </div>
 
@@ -383,7 +383,7 @@
         <label>Speed</label>
         <input type="range" min="0" max="100" id="speed" oninput="lbl('speed')"
                onchange="post('/pump/speed', {value:+this.value}); setActive('pump', +this.value>0)">
-        <span class="pct" id="speed-val">100%</span>
+        <span class="pct" id="speed-val">—</span>
       </div>
       <div class="row">
         <label>Run for</label>
@@ -794,9 +794,32 @@
       if (r && !r.error) { const v = $("tl-" + cam); v.src = "/camera/timelapse/" + cam + "?t=" + Date.now(); v.load(); }
     }
 
+    // Drive a level slider and its label from the value the machine reports.
+    // Skipped while that control has focus, so the periodic sync cannot yank
+    // the slider out from under someone who is dragging it.
+    function syncLevel(id, value) {
+      const el = $(id);
+      if (!el || value == null || Number.isNaN(+value)) return;
+      const v = Math.max(+el.min || 0, Math.min(+el.max || 100, Math.round(+value)));
+      if (document.activeElement === el) return;
+      if (+el.value !== v) el.value = v;
+      lbl(id);
+    }
     async function syncToggles() {
-      try { setActive("light", ((await get("/light/brightness")).value || 0) > 0); } catch {}
-      try { setActive("pump", ((await get("/pump/speed")).value || 0) > 0); } catch {}
+      // These endpoints report the live value. It used to be read purely to
+      // decide whether the On/Off highlight was active, and the number thrown
+      // away -- so the sliders sat at their hardcoded markup defaults (50% and
+      // 100%) and claimed a brightness the light was never set to.
+      try {
+        const v = (await get("/light/brightness")).value;
+        setActive("light", (v || 0) > 0);
+        syncLevel("brightness", v);
+      } catch {}
+      try {
+        const v = (await get("/pump/speed")).value;
+        setActive("pump", (v || 0) > 0);
+        syncLevel("speed", v);
+      } catch {}
     }
 
     async function loadGrow() {
@@ -1132,6 +1155,11 @@
     applyTempUnit();
     loadSystem(); refresh(); loadGrow(); loadSchedule(); loadPods(); loadCams(); loadTimelapses(); syncToggles(); ping();
     setInterval(refresh, 30000);
+    // Keep the level sliders honest while the page stays open: the schedule
+    // changes brightness and pump speed unattended (06:00 ramp on, 22:00 ramp
+    // off, timed pump runs), so a page left open would otherwise keep showing
+    // whatever it read at load.
+    setInterval(syncToggles, 30000);
     setInterval(ping, 10000);
   </script>
 </body>

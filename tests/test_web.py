@@ -113,6 +113,30 @@ class WebUITestCase(unittest.TestCase):
         self.assertIn("scripts_ready === false", html)
         self.assertIn(".alert-note{", html)
 
+    def test_level_sliders_are_driven_by_the_machine(self):
+        # Both sliders used to ship hardcoded placeholder labels (50% and 100%)
+        # and were never written back from the API, so they showed a level the
+        # hardware was not at -- a light at 30% read as 50%.
+        html = self.client.get("/").data.decode()
+        self.assertIn("function syncLevel(", html)
+        sync = html[
+            html.index("async function syncToggles(") : html.index("async function loadGrow(")
+        ]
+        self.assertIn('syncLevel("brightness", v)', sync)
+        self.assertIn('syncLevel("speed", v)', sync)
+        # Both must keep updating while the page is open, since the schedule
+        # changes them unattended.
+        self.assertIn("setInterval(syncToggles, 30000)", html)
+        # And a placeholder must not masquerade as a real reading.
+        for stale in ('id="brightness-val">50%', 'id="speed-val">100%'):
+            self.assertNotIn(stale, html, f"hardcoded placeholder left in place: {stale}")
+
+    def test_slider_sync_does_not_fight_the_user(self):
+        # The 30s sync must not yank a slider out from under someone dragging it.
+        html = self.client.get("/").data.decode()
+        body = html[html.index("function syncLevel(") : html.index("async function syncToggles(")]
+        self.assertIn("document.activeElement === el", body)
+
     def test_model_picker_is_in_settings(self):
         html = self.client.get("/").data.decode()
         for needle in (
