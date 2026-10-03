@@ -88,6 +88,31 @@ class WebUITestCase(unittest.TestCase):
         # The preset hover effect must not survive the disabled state.
         self.assertIn(".presets button[disabled]:hover", html)
 
+    def test_authenticated_media_is_fetched_not_src_assigned(self):
+        # /camera/* sits behind the admin password. A bare <img>/<video> src
+        # request cannot send X-API-Key, so it 401s from every browser except
+        # localhost -- which is why the camera looked broken only once auth was
+        # enabled, and worked fine before it. Media must go through the
+        # headered fetch helper instead.
+        html = self.client.get("/").data.decode()
+        import re
+
+        raw = re.findall(r'\$\("(?:cam|tl)-[a-z]+"\)\.src\s*=\s*"/camera/', html)
+        self.assertEqual(raw, [], f"raw src assignment on an authenticated endpoint: {raw}")
+        self.assertIn("function setAuthedMedia(", html)
+        self.assertIn('setAuthedMedia($("cam-upper")', html)
+        self.assertIn('setAuthedMedia($("tl-"', html)
+        # Object URLs must be revoked or every refresh leaks a blob.
+        self.assertIn("URL.revokeObjectURL", html)
+
+    def test_schedule_warning_is_wired(self):
+        # Cron fails silently when its target command is missing, so the UI has
+        # to say so instead of showing a healthy-looking saved schedule.
+        html = self.client.get("/").data.decode()
+        self.assertIn('id="sched-warn"', html)
+        self.assertIn("scripts_ready === false", html)
+        self.assertIn(".alert-note{", html)
+
     def test_model_picker_is_in_settings(self):
         html = self.client.get("/").data.decode()
         for needle in (

@@ -11,7 +11,13 @@ schedule_blueprint = Blueprint("schedule", __name__)
 
 @schedule_blueprint.route("", methods=["GET"])
 def get_schedule():
-    return jsonify(sched.load_schedule())
+    payload = sched.load_schedule()
+    # Cron fails silently when the light/water symlinks are absent, so report
+    # them alongside the schedule rather than letting it look healthy.
+    missing = sched.missing_scripts()
+    payload["scripts_missing"] = missing
+    payload["scripts_ready"] = not missing
+    return jsonify(payload)
 
 
 @schedule_blueprint.route("", methods=["POST"])

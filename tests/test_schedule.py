@@ -1,7 +1,40 @@
 import datetime
 import unittest
+from unittest.mock import patch
 
 from app.sensors.schedule import schedule as sched
+
+
+class MissingScriptsTestCase(unittest.TestCase):
+    """Cron reports nothing when its target command is absent.
+
+    On this unit /usr/local/bin/light and /usr/local/bin/water were missing
+    entirely: every scheduled job failed with "No such file or directory"
+    while the UI still showed a saved, enabled schedule. These guard the
+    detection that turns that into a visible warning.
+    """
+
+    def test_reports_nothing_when_all_installed(self):
+        with patch.object(sched.os.path, "exists", return_value=True):
+            self.assertEqual(sched.missing_scripts(), [])
+
+    def test_reports_the_missing_commands(self):
+        absent = {sched.LIGHT_CMD, sched.WATER_CMD}
+        with patch.object(sched.os.path, "exists", lambda p: p not in absent):
+            self.assertEqual(sorted(sched.missing_scripts()), sorted(absent))
+
+    def test_reports_partial_install(self):
+        with patch.object(sched.os.path, "exists", lambda p: p != sched.WATER_CMD):
+            self.assertEqual(sched.missing_scripts(), [sched.WATER_CMD])
+
+    def test_covers_every_command_the_schedule_writes(self):
+        # Every command compiled into crontab lines must be accounted for, so a
+        # newly added command cannot slip past the check.
+        with patch.object(sched.os.path, "exists", return_value=False):
+            self.assertEqual(
+                sorted(sched.missing_scripts()),
+                sorted({sched.LIGHT_CMD, sched.WATER_CMD, sched.REFRESH_CMD}),
+            )
 
 
 class BuildCronLinesTestCase(unittest.TestCase):

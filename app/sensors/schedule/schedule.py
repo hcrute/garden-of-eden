@@ -230,6 +230,18 @@ def _write_crontab(lines):
     subprocess.run(["crontab", "-"], input=payload, text=True, check=True)
 
 
+def missing_scripts():
+    """Return the scheduled-command paths that are not installed on this host.
+
+    ``bin/setup.sh`` symlinks these into /usr/local/bin. If that step never ran
+    (or the install moved), cron still fires every job and each one fails with
+    "No such file or directory" — silently, because cron only mails the user.
+    The schedule then *looks* configured while nothing happens. Surfacing this
+    lets the UI say so instead.
+    """
+    return [p for p in (LIGHT_CMD, WATER_CMD, REFRESH_CMD) if not os.path.exists(p)]
+
+
 def apply_schedule(schedule):
     """Persist the schedule and replace our crontab entries with its compiled form."""
     # Validate/compile first so a bad schedule never touches crontab.

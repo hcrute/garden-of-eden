@@ -126,6 +126,12 @@
     .advice-out:empty{ display:none; }
     .advice-out.err{ border-color:var(--red); color:var(--red); }
     .advice-meta{ margin-top:8px; }
+    /* Inline warning banner (e.g. scheduled commands missing). */
+    .alert-note{ margin-bottom:14px; padding:11px 14px; border-radius:12px;
+      background:#fdf1f1; border:1px solid var(--red); color:var(--red);
+      font-size:.8rem; line-height:1.5; }
+    .alert-note[hidden]{ display:none; }
+    .alert-note code{ background:rgba(0,0,0,.06); border-radius:5px; padding:1px 5px; }
     /* Every disabled control must LOOK disabled. This used to target only
        button.btn, so the Ask Groq presets kept their full colour and pointer
        cursor while being unclickable: a dead control that looked alive, and
@@ -431,6 +437,7 @@
 
     <div class="card">
       <h2>Schedule</h2>
+      <div class="alert-note" id="sched-warn" hidden></div>
       <div class="modes">
         <button class="mode" onclick="applyPreset('germinate')">Germinate</button>
         <button class="mode" onclick="applyPreset('seedling')">Seedling</button>
@@ -732,9 +739,32 @@
       } catch { $("meta").textContent = "offline"; conn(false); }
     }
 
+    // Camera and timelapse endpoints sit behind the admin password, and a plain
+    // <img>/<video> src request cannot carry an X-API-Key header — it would
+    // come back 401 from any browser that isn't localhost. Fetch with
+    // headers() and swap in an object URL instead. The previous object URL is
+    // revoked first, otherwise every refresh leaks a blob for the life of the
+    // page.
+    async function setAuthedMedia(el, path) {
+      try {
+        const r = await fetchT(path, { headers: headers() }, 20000);
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const next = URL.createObjectURL(await r.blob());
+        const old = el.dataset.objectUrl;
+        el.dataset.objectUrl = next;
+        el.dataset.error = "";
+        el.src = next;
+        if (old) URL.revokeObjectURL(old);
+      } catch (e) {
+        // Say so rather than leaving a silently broken tile.
+        el.dataset.error = e.message;
+        if (el.tagName === "IMG") el.alt = "camera unavailable — " + e.message;
+        console.warn("media load failed for " + path + ":", e.message);
+      }
+    }
     function loadCams() {
-      $("cam-upper").src = "/camera/upper?t=" + Date.now();
-      if (lowerCameraEnabled) $("cam-lower").src = "/camera/lower?t=" + Date.now();
+      setAuthedMedia($("cam-upper"), "/camera/upper?t=" + Date.now());
+      if (lowerCameraEnabled) setAuthedMedia($("cam-lower"), "/camera/lower?t=" + Date.now());
     }
     // Match the figure's aspect ratio to the actual media so object-fit:cover
     // never crops (the rotated upper feed is portrait 3:4, not 4:3).
@@ -755,7 +785,7 @@
     }
     function loadTimelapses() {
       const cameras = lowerCameraEnabled ? ["upper", "lower"] : ["upper"];
-      cameras.forEach(c => { $("tl-" + c).src = "/camera/timelapse/" + c + "?t=" + Date.now(); });
+      cameras.forEach(c => setAuthedMedia($("tl-" + c), "/camera/timelapse/" + c + "?t=" + Date.now()));
     }
     async function makeTimelapse(cam) {
       if (cam === "lower" && !lowerCameraEnabled) return;
@@ -1027,6 +1057,17 @@
         lightDays = mergeDays(l.days);
         pumpDays = mergeDays(p.days);
         renderSchedule();
+        // Cron reports nothing when its target command is missing, so say so
+        // here instead of letting a saved schedule look like it is running.
+        const warn = $("sched-warn");
+        if (s.scripts_ready === false) {
+          warn.hidden = false;
+          warn.innerHTML = "<b>Schedule is not running.</b> These commands are missing, so every cron job fails silently: <code>" +
+            (s.scripts_missing || []).join("</code>, <code>") +
+            "</code>. Restore them with <code>bin/setup.sh</code> (or the two <code>ln -fs</code> symlinks into /usr/local/bin).";
+        } else {
+          warn.hidden = true;
+        }
       } catch {}
     }
     function saveSchedule() {
