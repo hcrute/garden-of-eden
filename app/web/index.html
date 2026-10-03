@@ -239,12 +239,23 @@
     #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
     #toast.err { background:var(--red-ink); }
 
+    /* Auth banner: the page shell loads without a password so it can prompt,
+       which means a browser with none looks healthy while every API call 401s
+       and each card's catch{} swallows it. This says so explicitly. */
+    #auth-warn { margin-bottom:16px; padding:13px 16px; border-radius:14px;
+      background:#fdf1f1; border:1px solid var(--red); color:var(--red);
+      font-size:.85rem; line-height:1.5; }
+    #auth-warn[hidden]{ display:none; }
+    #auth-warn b{ font-weight:700; }
+    #auth-warn code{ background:rgba(0,0,0,.06); border-radius:5px; padding:1px 5px; }
+
     @media (max-width:520px){ .cams{ grid-template-columns:1fr; } header h1{ font-size:1.2rem; } }
   </style>
   <script>(function(){var t=localStorage.getItem("theme")||"dark";document.documentElement.dataset.theme=t==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;})();</script>
 </head>
 <body>
   <div class="wrap">
+    <div id="auth-warn" hidden></div>
     <header>
       <div class="logo">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -521,15 +532,37 @@
       try { return await fetch(path, Object.assign({ signal: ctrl.signal }, opts)); }
       finally { clearTimeout(timer); }
     }
+    // Report authentication state explicitly.
+    //
+    // / and /health are exempt from the admin password so the page can load
+    // and prompt for one -- but that means a browser holding no password looks
+    // perfectly healthy while every other call 401s, and each card's catch {}
+    // swallows the failure. The result is a page of empty cards with no
+    // explanation, which is indistinguishable from "nothing to show".
+    function setAuthState(unauthorized) {
+      const el = $("auth-warn");
+      if (!el) return;
+      el.hidden = !unauthorized;
+      if (unauthorized) {
+        el.innerHTML =
+          "<b>Not signed in.</b> This browser has no admin password, so every " +
+          "control below is read-only and the cards cannot load. Open " +
+          "<b>Settings</b> (⚙, top right), paste the admin password and save.";
+      }
+    }
     async function get(path) {
       const r = await fetchT(path, { headers: headers() });
+      if (r.status === 401) { setAuthState(true); conn(false); throw new Error(r.status); }
       if (!r.ok) throw new Error(r.status);
+      setAuthState(false);
       conn(true); return r.json();
     }
     async function post(path, body) {
       try {
         const r = await fetchT(path, { method: "POST", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body || {}) });
         let d = {}; try { d = await r.json(); } catch {}
+        if (r.status === 401) setAuthState(true);
+        else if (r.ok) setAuthState(false);
         conn(r.ok); toast(d.message || d.error || (r.ok ? "ok" : "error " + r.status), !r.ok); return d;
       } catch (e) { conn(false); toast(e.name === "AbortError" ? "request timed out" : "error: " + e.message, true); }
     }
@@ -1145,7 +1178,7 @@
       $("api-key").value = API_KEY;
       $("groq-key").value = GROQ_KEY;
     }
-    function saveKey() { API_KEY = $("api-key").value.trim(); localStorage.setItem("garden_key", API_KEY); toast("key saved"); syncAdviceGate(); loadSystem(); refresh(); }
+    function saveKey() { API_KEY = $("api-key").value.trim(); localStorage.setItem("garden_key", API_KEY); toast("key saved"); syncAdviceGate(); setAuthState(false); loadSystem(); refresh(); }
 
     setupCollapsible();
     setupAdvice();

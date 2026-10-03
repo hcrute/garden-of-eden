@@ -137,6 +137,24 @@ class WebUITestCase(unittest.TestCase):
         body = html[html.index("function syncLevel(") : html.index("async function syncToggles(")]
         self.assertIn("document.activeElement === el", body)
 
+    def test_unauthenticated_browser_is_told_so(self):
+        # / and /health are exempt from the admin password so the page can load
+        # and prompt for one. A browser holding no password therefore looks
+        # healthy while every other call 401s and each card's catch {} swallows
+        # it -- an empty page indistinguishable from "nothing to show".
+        html = self.client.get("/").data.decode()
+        self.assertIn('id="auth-warn"', html)
+        self.assertIn("function setAuthState(", html)
+        self.assertIn("Not signed in.", html)
+        get_fn = html[html.index("async function get(path)") : html.index("async function post(")]
+        self.assertIn("r.status === 401", get_fn)
+        post_fn = html[html.index("async function post(") : html.index("async function ping(")]
+        self.assertIn("r.status === 401", post_fn)
+        # Saving a password must clear it, and a good response must too.
+        self.assertIn("setAuthState(false)", get_fn)
+        save = html[html.index("function saveKey()") : html.index("function saveKey()") + 400]
+        self.assertIn("setAuthState(false)", save)
+
     def test_model_picker_is_in_settings(self):
         html = self.client.get("/").data.decode()
         for needle in (
