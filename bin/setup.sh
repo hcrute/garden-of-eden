@@ -358,9 +358,14 @@ function enable_pigpiod_service {
 
 # Setup and start MQTT service
 function setup_mqtt_service {
-    local service_file="$INSTALL_DIR/services/etc/systemd/system/mqtt.service"
+    # Generate into a temp file, never into the repo. Writing the unit into
+    # services/ overwrote a tracked copy on every install, which left the
+    # checkout dirty and -- worse -- left a stale copy behind for anyone who
+    # copied it by hand instead of re-running setup.
+    local service_file
+    service_file=$(mktemp)
 
-    cat > $service_file <<EOF
+    cat > "$service_file" <<EOF
 [Unit]
 Description=MQTT Service
 Requires=pigpiod.service
@@ -382,7 +387,8 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    sudo cp $service_file /etc/systemd/system/
+    sudo cp "$service_file" /etc/systemd/system/mqtt.service
+    rm -f "$service_file"
     sudo systemctl daemon-reload
     sudo systemctl enable mqtt.service
     sudo systemctl start mqtt.service
@@ -391,10 +397,10 @@ EOF
 
 # Setup and start the REST API + web UI service (served by waitress on :5000).
 function setup_api_service {
-    local service_file="$INSTALL_DIR/services/etc/systemd/system/garden-api.service"
-    mkdir -p "$(dirname "$service_file")"
+    local service_file
+    service_file=$(mktemp)
 
-    cat > $service_file <<EOF
+    cat > "$service_file" <<EOF
 [Unit]
 Description=Garden of Eden REST API + Web UI
 After=network.target pigpiod.service
@@ -411,7 +417,8 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    sudo cp $service_file /etc/systemd/system/
+    sudo cp "$service_file" /etc/systemd/system/garden-api.service
+    rm -f "$service_file"
     sudo systemctl daemon-reload
     sudo systemctl enable garden-api.service
     sudo systemctl start garden-api.service
@@ -476,6 +483,53 @@ EOF
     log_info "Nightly auto-update enabled (garden-autoupdate.timer, ~03:30)."
 }
 
+# Timelapse capture: archive one frame per camera on a schedule so the feature
+# does not depend on the MQTT publisher running. Without this, timelapse stays
+# permanently empty on a unit with no mqtt.service, and "Build" can only fail.
+function setup_timelapse_timer {
+    local svc tmr
+    svc=$(mktemp)
+    tmr=$(mktemp)
+
+    chmod +x "$INSTALL_DIR/bin/capture-frames.sh"
+
+    # Take the first frame a couple of minutes after boot rather than only on
+    # the timer, so a fresh install has something to build from immediately.
+    cat > "$svc" <<EOF
+[Unit]
+Description=Garden of Eden timelapse frame capture
+After=network.target pigpiod.service
+Wants=pigpiod.service
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/bin/capture-frames.sh
+EOF
+
+    cat > "$tmr" <<EOF
+[Unit]
+Description=Capture Garden of Eden timelapse frames
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=\${TIMELAPSE_INTERVAL:-3600}s
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo cp "$svc" /etc/systemd/system/garden-timelapse.service
+    sudo cp "$tmr" /etc/systemd/system/garden-timelapse.timer
+    rm -f "$svc" "$tmr"
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now garden-timelapse.timer
+    log_info "Timelapse capture enabled (garden-timelapse.timer, every \${TIMELAPSE_INTERVAL:-3600}s)."
+}
+
 # Verify the REST API responds, if it is running (issue #51 checklist item).
 function verify_api {
     if command -v curl >/dev/null 2>&1 && curl -s -o /dev/null -w '' "http://localhost:5000/temperature" 2>/dev/null; then
@@ -517,9 +571,10 @@ function verify_install {
     done
 
     # Units setup.sh installs. mqtt.service drives Home Assistant discovery;
-    # garden-api.service serves the web UI and REST API.
+    # garden-api.service serves the web UI and REST API; the timelapse timer
+    # archives the frames the timelapse videos are built from.
     local unit
-    for unit in pigpiod.service mqtt.service garden-api.service garden-autoupdate.timer; do
+    for unit in pigpiod.service mqtt.service garden-api.service garden-autoupdate.timer garden-timelapse.timer; do
         local state enabled
         state="$(systemctl is-active "$unit" 2>/dev/null || true)"
         enabled="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
@@ -570,7 +625,9 @@ function print_plan {
   8. Install + enable systemd services: mqtt.service, garden-api.service
   9. Enable nightly auto-update timer (garden-autoupdate.timer, ~03:30) +
      a scoped sudoers rule to restart the two services unattended
- 10. Verify: check the symlinks, units and .env actually landed, and report
+ 10. Enable timelapse capture timer (garden-timelapse.timer) so frames are
+     archived for the timelapse videos
+ 11. Verify: check the symlinks, units and .env actually landed, and report
      anything missing (a partial install otherwise looks healthy)
 Reversible with: bin/uninstall.sh
 ============================================================
@@ -620,5 +677,6 @@ setup_mdns_hostname
 setup_mqtt_service
 setup_api_service
 setup_autoupdate
+setup_timelapse_timer
 verify_api
 verify_install

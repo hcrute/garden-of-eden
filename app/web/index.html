@@ -824,7 +824,10 @@
       if (cam === "lower" && !lowerCameraEnabled) return;
       toast("Building " + cam + " timelapse… (can take a minute)");
       const r = await post("/camera/timelapse/" + cam);
-      if (r && !r.error) { const v = $("tl-" + cam); v.src = "/camera/timelapse/" + cam + "?t=" + Date.now(); v.load(); }
+      // Reload through setAuthedMedia, not a bare src: a plain request cannot
+      // carry X-API-Key, so assigning src directly would 401 the video we just
+      // successfully built.
+      if (r && !r.error) setAuthedMedia($("tl-" + cam), "/camera/timelapse/" + cam + "?t=" + Date.now());
     }
 
     // Drive a level slider and its label from the value the machine reports.

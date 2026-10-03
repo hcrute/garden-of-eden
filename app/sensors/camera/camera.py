@@ -91,10 +91,18 @@ def archive_frame(src_path, cam):
 
 def generate_timelapse(cam):
     """Assemble the archived frames for ``cam`` into an mp4. Raises
-    FileNotFoundError if no frames have been archived yet."""
+    FileNotFoundError if no frames have been archived yet, or if ffmpeg is not
+    installed on this host."""
     folder = _frames_dir(cam)
     if not glob.glob(os.path.join(folder, "*.jpg")):
         raise FileNotFoundError("no frames archived yet")
+    # Distinguish "nothing to build" from "cannot build". Both surface as
+    # FileNotFoundError, and reporting a missing ffmpeg as a missing frame
+    # archive sends the reader looking in entirely the wrong place.
+    if shutil.which("ffmpeg") is None:
+        raise FileNotFoundError(
+            "ffmpeg is not installed on this host; install it to build timelapses"
+        )
     out = timelapse_path(cam)
     cmd = [
         "ffmpeg",

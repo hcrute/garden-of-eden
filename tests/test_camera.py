@@ -1,4 +1,6 @@
+import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import config
@@ -57,6 +59,70 @@ class CameraCaptureCommandTestCase(unittest.TestCase):
             camera.capture_lower()
         cmd = mock_run.call_args[0][0]
         self.assertNotIn("--rotate", cmd)
+
+
+class TimelapseBuildTestCase(unittest.TestCase):
+    """Building a timelapse needs frames *and* ffmpeg; they fail differently."""
+
+    def _with_frames(self, tmp):
+        folder = Path(tmp) / "upper"
+        folder.mkdir(parents=True)
+        (folder / "20260101-000000.jpg").write_bytes(b"x")
+        return folder
+
+    def test_no_frames_reports_missing_archive(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(camera, "_frames_dir", return_value=str(Path(tmp) / "upper")):
+                with self.assertRaises(FileNotFoundError) as ctx:
+                    camera.generate_timelapse("upper")
+        self.assertIn("no frames archived", str(ctx.exception))
+
+    def test_missing_ffmpeg_is_reported_distinctly(self):
+        # Both cases raise FileNotFoundError, so a missing ffmpeg reported as
+        # "no frames archived" sends the reader to the wrong place entirely.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = self._with_frames(tmp)
+            with (
+                patch.object(camera, "_frames_dir", return_value=str(folder)),
+                patch.object(camera.shutil, "which", return_value=None),
+                patch("app.sensors.camera.camera.subprocess.run") as mock_run,
+            ):
+                with self.assertRaises(FileNotFoundError) as ctx:
+                    camera.generate_timelapse("upper")
+        mock_run.assert_not_called()
+        self.assertIn("ffmpeg", str(ctx.exception))
+
+
+class CaptureScriptTestCase(unittest.TestCase):
+    """bin/capture-frames.sh exists, parses, and setup.sh installs the timer."""
+
+    def setUp(self):
+        self.setup = (Path(__file__).resolve().parent.parent / "bin" / "setup.sh").read_text()
+        self.capture = Path(__file__).resolve().parent.parent / "bin" / "capture-frames.sh"
+
+    def test_capture_script_exists_and_parses(self):
+        self.assertTrue(self.capture.exists(), "bin/capture-frames.sh is missing")
+        proc = subprocess.run(["bash", "-n", str(self.capture)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_capture_script_archives_via_the_library(self):
+        # It must go through camera.capture/archive so rotation and the model
+        # check (no lower camera on a 3.0) still apply.
+        src = self.capture.read_text()
+        self.assertIn("camera.capture_upper", src)
+        self.assertIn("camera.archive_frame", src)
+        self.assertIn("camera.CAMERAS", src)
+
+    def test_setup_installs_the_timer(self):
+        self.assertIn("setup_timelapse_timer", self.setup)
+        self.assertIn("garden-timelapse.timer", self.setup)
+        self.assertIn("garden-timelapse.service", self.setup)
+        # ...and verification must know about it, or a missing timer is invisible.
+        self.assertIn("garden-timelapse.timer", self.setup.split("verify_install")[0])
 
 
 if __name__ == "__main__":
