@@ -5,10 +5,10 @@
 Before making changes, read the relevant context from:
 
 - `CONTRIBUTORS.md` for Conventional Commit rules.
-- `context_documentation/README.md` for the documentation bank conventions.
-- `context_documentation/project-context.md` for architecture, paths, and validation commands.
-- `context_documentation/pi-operations.md` for Raspberry Pi operational guidance.
-- `context_documentation/known-issues.md` for confirmed limitations and operational risks.
+- `docs/README.md` for the documentation bank conventions.
+- `docs/project-context.md` for architecture, paths, and validation commands.
+- `docs/pi-operations.md` for Raspberry Pi operational guidance.
+- `docs/known-issues.md` for confirmed limitations and operational risks.
 
 Read nearby implementation and tests before editing. Keep changes focused on the requested behavior and follow existing patterns.
 
@@ -37,7 +37,7 @@ For a focused change, run the narrowest relevant test or check first. Always run
 
 ## Documentation
 
-Update the relevant documentation when behavior or operational procedures change. Put durable project knowledge in `context_documentation/` and link new documents from `context_documentation/README.md`. Keep personal machine configuration out of committed documentation.
+Update the relevant documentation when behavior or operational procedures change. Put durable project knowledge in `docs/` and link new documents from `docs/README.md`. Keep personal machine configuration out of committed documentation.
 
 ## Commit messages
 

@@ -49,9 +49,9 @@ A set of changes closing out the open milestones:
 See [`docs/design.md`](docs/design.md) for architecture, and
 [`docs/maintenance.md`](docs/maintenance.md) for upkeep.
 
-For contributor and coding-assistant context, see the [`context_documentation/`](context_documentation/)
+For contributor and coding-assistant context, see the [`docs/`](docs/)
 documentation bank. Pi-only operational scripts and private SSH configuration are
-covered in [`context_documentation/pi-operations.md`](context_documentation/pi-operations.md).
+covered in [`docs/pi-operations.md`](docs/pi-operations.md).
 
 ### REST API endpoints
 

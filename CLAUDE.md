@@ -4,14 +4,14 @@ Garden of Eden is a Python 3.9+ Raspberry Pi garden controller.
 
 ## Read first
 
-@context_documentation/project-context.md
+@docs/project-context.md
 
 Read these when the task touches them:
 
 - `CONTRIBUTORS.md` - Conventional Commit format (required for all commits).
-- `context_documentation/README.md` - documentation bank conventions.
-- `context_documentation/pi-operations.md` - connecting to the Pi, running repo scripts there.
-- `context_documentation/known-issues.md` - confirmed limitations and operational risks.
+- `docs/README.md` - documentation bank conventions.
+- `docs/pi-operations.md` - connecting to the Pi, running repo scripts there.
+- `docs/known-issues.md` - confirmed limitations and operational risks.
 
 Read nearby implementation and tests before editing. Keep changes focused and
 follow existing patterns.

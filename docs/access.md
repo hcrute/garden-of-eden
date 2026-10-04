@@ -101,3 +101,7 @@ sudo systemctl status garden-api.service   # web UI + REST
 sudo systemctl status mqtt.service         # MQTT / Home Assistant
 sudo systemctl status ssh                  # remote access
 ```
+
+For day-to-day management of these units -- logs, restarts, and the cron
+schedule that drives the lights and pump -- see
+[Pi operations](pi-operations.md).

@@ -115,27 +115,18 @@ LOWER_CAMERA_ENABLED=false
 
 ## Private HTTPS with Tailscale
 
-Tailscale Serve proxies the private HTTPS endpoint to the local API on port 5000.
-This does not require a purchased domain, router port forwarding, or a public
-internet listener.
-
-Install and sign in to Tailscale on each client device, then open the device
-hostname shown by `tailscale serve status`:
+For reaching the API privately from another device, see
+[Accessing the unit](access.md#private-https-access-with-tailscale), which
+covers installing Tailscale and serving the API over HTTPS. The short version:
 
 ```bash
 sudo tailscale serve --bg http://127.0.0.1:5000
 tailscale serve status
 ```
 
-The URL has the form `https://<device>.<tailnet>.ts.net/` and is available only
-to devices signed in to the same tailnet. Disable the proxy with:
-
-```bash
-sudo tailscale serve --https=443 off
-```
-
-Keep generated Tailscale hostnames and tailnet names in local configuration or
-the Tailscale admin console, not in committed repository files.
+Open the `https://<device>.<tailnet>.ts.net/` URL on any device signed into the
+same tailnet. Keep generated hostnames and tailnet names in local configuration
+or the Tailscale admin console, never in committed repository files.
 
 ## Safety notes
 
