@@ -1,4 +1,4 @@
-#!/usr/scripts/env python3
+#!/usr/bin/env python3
 from app import create_app
 from app.lib.logging_config import configure_logging
 

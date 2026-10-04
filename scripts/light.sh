@@ -1,4 +1,4 @@
-#!/usr/scripts/env bash
+#!/usr/bin/env bash
 
 # Script to control Gardyn lights
 # Usage: light <brightness|on|off>

@@ -91,6 +91,58 @@ class SetupScriptTestCase(unittest.TestCase):
         self.assertTrue((root / "scripts" / "setup.sh").exists())
         self.assertFalse((root / "bin").exists(), "bin/ should have been renamed to scripts/")
 
+    def test_no_scripts_in_system_paths(self):
+        """`scripts` is a repo directory, never a system one.
+
+        The bin/ -> scripts/ rename was applied as a blanket string replace and
+        it rewrote system paths: #!/bin/bash became #!/scripts/bash,
+        #!/usr/bin/env became #!/usr/scripts/env, and /usr/bin/systemctl became
+        /usr/scripts/systemctl. Every script then failed with "cannot execute:
+        required file not found" -- and nothing caught it, because `bash -n`
+        and running a script via `bash script.sh` both bypass the shebang.
+        """
+        root = SETUP.parent.parent
+        offenders = []
+        patterns = (
+            re.compile(r"#!\S*scripts/"),
+            re.compile(r"/usr/scripts/"),
+            re.compile(r"/usr/local/scripts/"),
+        )
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if d not in {"venv", ".git", "__pycache__", "timelapse"}
+                and not d.startswith(".venv")
+            ]
+            for name in filenames:
+                path = Path(dirpath) / name
+                if path.suffix not in (".sh", ".md", ".py", ".yml", ".html"):
+                    continue
+                if path.resolve() == Path(__file__).resolve():
+                    continue  # this file quotes the broken forms on purpose
+                for n, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+                    if any(p.search(line) for p in patterns):
+                        offenders.append(f"{path.relative_to(root)}:{n}: {line.strip()[:70]}")
+        self.assertEqual(
+            offenders, [], "system path wrongly containing scripts/:\n" + "\n".join(offenders)
+        )
+
+    def test_every_script_shebang_points_at_a_real_interpreter(self):
+        """A bad shebang cannot be run directly, which is exactly how cron
+        invokes these scripts."""
+        scripts = SETUP.parent.parent / "scripts"
+        for sh in sorted(scripts.glob("*.sh")):
+            lines = sh.read_text(errors="ignore").splitlines()
+            if not lines or not lines[0].startswith("#!"):
+                continue  # show-mqtt-logs.sh has no shebang; run it via bash
+            interp = lines[0][2:].split()[0]
+            with self.subTest(script=sh.name, shebang=lines[0]):
+                self.assertTrue(
+                    (scripts / interp.lstrip("/")).exists() or Path(interp).exists(),
+                    f"{sh.name} shebang points at a missing interpreter: {interp}",
+                )
+
     def test_no_stale_context_documentation_reference(self):
         """context_documentation/ was merged into docs/.
 

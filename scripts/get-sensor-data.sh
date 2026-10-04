@@ -1,4 +1,4 @@
-#!/scripts/bash
+#!/bin/bash
 pwd=$(dirname $(readlink -f $0))
 wkdir=$(realpath $pwd/..)
 

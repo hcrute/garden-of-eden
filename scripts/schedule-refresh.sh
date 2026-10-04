@@ -1,4 +1,4 @@
-#!/usr/scripts/env bash
+#!/usr/bin/env bash
 
 # Re-apply the saved schedule. Run nightly by cron (added automatically while
 # Vacation mode is active) so vacation reverts to the normal schedule once its

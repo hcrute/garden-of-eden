@@ -1,4 +1,4 @@
-#!/scripts/bash
+#!/bin/bash
 
 # Configuration
 BIN_DIR=$(dirname $(readlink -f $0))
@@ -440,7 +440,7 @@ function setup_autoupdate {
     local tmp_sudoers
     tmp_sudoers=$(mktemp)
     cat > "$tmp_sudoers" <<EOF
-$USER ALL=(root) NOPASSWD: /usr/scripts/systemctl restart mqtt.service, /usr/scripts/systemctl restart garden-api.service
+$USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart mqtt.service, /usr/bin/systemctl restart garden-api.service
 EOF
     if sudo visudo -cf "$tmp_sudoers" >/dev/null 2>&1; then
         sudo cp "$tmp_sudoers" "$sudoers"

@@ -1,4 +1,4 @@
-#!/scripts/bash
+#!/bin/bash
 # Update an existing Garden of Eden install in place (issue #14):
 # pull latest code, refresh Python deps, and restart services.
 set -euo pipefail

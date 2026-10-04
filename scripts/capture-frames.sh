@@ -1,4 +1,4 @@
-#!/usr/scripts/env bash
+#!/usr/bin/env bash
 
 # Capture one frame per configured camera and archive it for timelapse.
 #
