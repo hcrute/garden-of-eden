@@ -17,10 +17,12 @@ class Light:
         self.pin = pin
         self.pin_factory = pin_factory if pin_factory else PiGPIOFactory()
         self.gpio = GPIOController(pin, self.pin_factory, pigpio.pi)
-        # Seed PWMLED with whatever the pin is already doing.
+        # Seed PWMLED with the persisted brightness rather than letting it
+        # default to 0.
         #
-        # PWMLED defaults to value=0 and drives the pin low the moment it is
-        # constructed, so creating a Light used to switch the real light off.
+        # PWMLED defaults to initial_value=0 and drives the pin low the moment
+        # it is constructed, so creating a Light used to switch the real light
+        # off.
         # That was invisible from the API -- its Light is a long-lived module
         # singleton created at import -- but every other process that imports
         # anything under app.* (and therefore app/__init__.py, which builds the
@@ -34,23 +36,38 @@ class Light:
         self.led = PWMLED(
             self.pin,
             pin_factory=self.pin_factory,
-            initial_value=self._current_value(),
+            initial_value=self._initial_value(),
         )
         self.set_frequency(frequency)
 
-    def _current_value(self):
-        """The pin's present duty cycle as a 0.0-1.0 fraction.
+    def _initial_value(self):
+        """Brightness to start at, taken from the persisted actuator state.
 
-        pigpio reports PWM duty cycle on 0-255; PWMLED takes 0.0-1.0. Falls
-        back to 0 (light off) if the pin cannot be read, which is the safe
-        direction for a device that is merely being constructed.
+        Deliberately not read back from the pin. gpiozero's pigpio pins are
+        PinPWMFixedValue, which always writes 0-255, but pigpio's configured
+        range on this hardware is 10000 -- so a duty cycle read from pigpio
+        does not mean what a gpiozero 0.0-1.0 value means, and converting
+        between them silently rescales the light. Reading 10000 and dividing
+        by 255 is not a 39x error, it is nonsense.
+
+        The persisted state is the app's own source of truth, the same one
+        mqtt.py restores on startup, and it does not depend on pigpio's
+        internals at all.
         """
         try:
-            duty = float(self.gpio.pi.get_PWM_dutycycle(self.pin))
+            from app.lib import state as state_lib
+
+            state = state_lib.load_state()
         except Exception as exc:  # noqa: BLE001 - construction must not raise
-            logging.warning("Could not read current duty cycle for pin %s: %s", self.pin, exc)
+            logging.warning("Could not read persisted light state: %s", exc)
             return 0.0
-        return max(0.0, min(1.0, duty / 255.0))
+        if not state.get("light_on"):
+            return 0.0
+        try:
+            brightness = float(state.get("brightness", 0))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, brightness / 100.0))
 
     def on(self):
         """

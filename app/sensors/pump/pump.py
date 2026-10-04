@@ -27,18 +27,30 @@ class Pump:
         self.pump = PWMLED(
             self.pin,
             pin_factory=self.pin_factory,
-            initial_value=self._current_value(),
+            initial_value=self._initial_value(),
         )
         self.set_frequency(frequency)
 
-    def _current_value(self):
-        """The pin's present duty cycle as a 0.0-1.0 fraction."""
+    def _initial_value(self):
+        """Duty cycle to start at, taken from the persisted actuator state.
+
+        See Light._initial_value: the pin's reported duty cycle cannot be
+        round-tripped through gpiozero's 0.0-1.0 value on this hardware.
+        """
         try:
-            duty = float(self.gpio.pi.get_PWM_dutycycle(self.pin))
+            from app.lib import state as state_lib
+
+            state = state_lib.load_state()
         except Exception as exc:  # noqa: BLE001 - construction must not raise
-            logging.warning("Could not read current duty cycle for pin %s: %s", self.pin, exc)
+            logging.warning("Could not read persisted pump state: %s", exc)
             return 0.0
-        return max(0.0, min(1.0, duty / 255.0))
+        if not state.get("pump_on"):
+            return 0.0
+        try:
+            speed = float(state.get("speed", 0))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, speed / 100.0))
 
     def on(self):
         """
