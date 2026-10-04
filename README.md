@@ -71,7 +71,8 @@ covered in [`docs/pi-operations.md`](docs/pi-operations.md).
 
 ### Run with Docker
 
-```bash
+```
+bash
 cp .env-dist .env          # edit MQTT + identity
 sudo pigpiod -p 8888       # pigpiod on the Pi host
 docker compose up -d       # api (:5000) + mqtt + optional broker
@@ -89,7 +90,8 @@ and Alexa.
 A simulator runs the whole stack with fake hardware so you can try the web UI,
 REST API, and Home Assistant discovery on your laptop:
 
-```bash
+```
+bash
 python -m venv .venv-dev && .venv-dev/scripts/pip install -r requirements-dev.txt
 .venv-dev/scripts/python -m simulator.serve     # http://localhost:5000/
 .venv-dev/scripts/python -m simulator.mqtt_sim  # MQTT for Home Assistant (needs a broker)
@@ -149,7 +151,8 @@ See [`docs/simulator.md`](docs/simulator.md).
 
 Start with a clean install of Linux. Use the [RaspberryPi Imager](https://www.raspberrypi.com/software/). Ensure ssh and wifi is setup. Once the image is written, pop the SDcard into the pi and ssh into it.
 
-```bash
+```
+bash
 # clone repo
 git clone git@github.com:iot-root/garden-of-eden.git
 cd garden-of-eden 
@@ -188,7 +191,8 @@ sudo systemctl status mqtt.service
 
 Confirm they are up:
 
-```bash
+```
+bash
 sudo systemctl status garden-api.service mqtt.service
 curl -s http://localhost:5000/health      # {"status":"ok"}
 sudo journalctl -u garden-api.service -n 40 --no-pager
@@ -217,76 +221,110 @@ your lights and pump never run.
 
 ### MQTT with HomeAssistant
 
-For homeassistant:
-
-You need a mqtt broker either on the gardyn pi or homeassistant.
-
-To install on the pi run
+You need an MQTT broker - either on the Gardyn Pi or on your Home Assistant
+host. Installing on the Pi:
 
 ```
-sudo apt-get install mosquitto mosquitto-clients
+sudo apt-get update
+sudo apt-get install -y mosquitto mosquitto-clients
 ```
 
-Add mqtt-broker username and password:
-
-`sudo mosquitto_passwd -c /etc/mosquitto/passwd <USERNAME>`
-
-> Note: make sure to update the .env file which is used by `config.py` for `mqtt.py`
-
-Run `sudo nano /etc/mosquitto/mosquitto.conf` and change the following lines to match:
-
-```
-allow_anonymous false
-password_file /etc/mosquitto/passwd
-listener 1883
-```
-
-A broker on its own does nothing — `mqtt.service` is what publishes Home
-Assistant discovery, the camera image entity, and the periodic frame capture.
-Install it with:
+A broker on its own does nothing. `mqtt.service` is what publishes Home
+Assistant discovery (25 entities), the camera image, and the periodic frame
+capture:
 
 ```
 sudo scripts/install-mqtt-service.sh
 ```
 
 The unit embeds your username and checkout path, so it is generated at install
-time rather than committed, and `scripts/setup.sh` calls the same installer.
-Afterwards:
+time rather than committed; `scripts/setup.sh` calls the same installer.
+
+#### Local-only access (the default)
+
+Out of the box mosquitto listens on `127.0.0.1` only. That is enough for
+`mqtt.py` on the Pi to publish, and it is all the web UI and REST API need -
+they do not use MQTT at all. Check it is working:
 
 ```
 systemctl status mqtt.service
-journalctl -u mqtt.service -f
+journalctl -u mqtt.service -n 30 --no-pager
 ```
 
-`mqtt.py` retries when no broker is reachable, so it is safe to install the
-service before the broker. To use a broker on your Home Assistant host instead,
-set `BROKER` in `.env` to its address.
+Look for `Connected with result code Success`.
 
+#### Allowing other machines to connect
 
-Here are some additional options that you could set in `/etc/mosquitto/mosquitto.conf`:
-
-```
-pid_file /run/mosquitto/mosquitto.pid
-
-persistence true
-persistence_location /var/lib/mosquitto/
-
-log_dest file /var/log/mosquitto/mosquitto.log
-
-listener 1883 0.0.0.0
-
-allow_anonymous false
-password_file /etc/mosquitto/passwd
-
-include_dir /etc/mosquitto/conf.d
-```
-
-
-Restart the service
+To reach the broker from Home Assistant on another machine you must open the
+port and require authentication. First give the account a real password in
+`.env` - the shipped value is a placeholder:
 
 ```
+openssl rand -base64 18
+```
+
+Then set `MQTT_USERNAME` and `MQTT_PASSWORD` in `.env` and run:
+
+```
+sudo scripts/install-mqtt-broker.sh
+```
+
+This writes `/etc/mosquitto/conf.d/20-gardyn-remote.conf` (a drop-in, so a
+package upgrade cannot clobber it), sets `allow_anonymous false`, and creates
+`/etc/mosquitto/passwd` from the credentials in `.env`. The password is piped
+to `mosquitto_passwd` on stdin, so it never appears in `ps` or your shell
+history. It refuses to run while `MQTT_PASSWORD` is still the example value.
+
+Two `listener` lines are written, and **both are required**:
+
+```
+listener 1883 127.0.0.1     # mqtt.py on this machine
+listener 1883 100.99.129.5  # remote clients
+```
+
+mosquitto only creates the implicit loopback listener when *no* `listener` is
+defined. Define one and it disappears - so a single `listener 1883` line that
+is remotely reachable also breaks `mqtt.py` on the Pi, and the symptom is a
+reconnect loop that looks like a network fault rather than a config mistake.
+
+**Which address to bind.** The script defaults to this machine's Tailscale
+address, so the broker is reachable from your tailnet but *not* from the rest
+of the LAN. Override it if you want the LAN instead:
+
+```
+MQTT_BIND=0.0.0.0 sudo -E scripts/install-mqtt-broker.sh
+```
+
+There is no firewall on a default Raspberry Pi OS install (INPUT policy is
+`ACCEPT`), so no port needs opening - but that also means `0.0.0.0` exposes
+the broker to every device on your Wi-Fi. Prefer Tailscale unless you have a
+reason not to.
+
+Verify from another machine:
+
+```
+mosquitto_sub -h 100.99.129.5 -p 1883 -u gardyn -P PASSWORD -t 'gardyn/#' -v
+```
+
+Home Assistant's MQTT integration wants broker set to that address, port
+1883, and the same username and password.
+
+To undo:
+
+```
+sudo rm /etc/mosquitto/conf.d/20-gardyn-remote.conf /etc/mosquitto/passwd
 sudo systemctl restart mosquitto
 ```
+
+`scripts/uninstall.sh` does this for you.
+
+> Note: `config.py` reads `.env`, and `mqtt.py` takes its credentials from
+> there. Keep `.env` as the single source of truth so the broker and the
+> publisher cannot drift apart.
+
+#### Using a broker on the Home Assistant host
+
+Skip all of the above and set `BROKER` in `.env` to that host's address.
 
 you just need to edit the `.env` with the mosquitto username and password created above in /etc/mosquitto/passwd.
 
@@ -346,7 +384,8 @@ Start the Flask REST API `python run.py`
 
 Test options:
 
-```bash
+```
+bash
 # REST endpoints
 ./scripts/api-test.sh
 
@@ -363,7 +402,8 @@ Short version of how to work on this without a Pi in front of you, and how to ad
 
 #### Set up once
 
-```bash
+```
+bash
 python -m venv .venv-dev
 .venv-dev/scripts/pip install -r requirements-dev.txt
 ```
@@ -372,7 +412,8 @@ That's the pure-Python dev set. The Pi deps in `requirements.txt` (gpiozero, pig
 
 #### Run the checks
 
-```bash
+```
+bash
 .venv-dev/scripts/python -m unittest discover -t . -s tests -p 'test_*.py'
 .venv-dev/scripts/ruff check .
 .venv-dev/scripts/black --check .
@@ -412,7 +453,8 @@ Activate python venv `source venv/bin/activate`
 
 Examples:
 
-```bash
+```
+bash
 python app/sensors/distance/distance.py
 python app/sensors/humidity/humidity.py
 python app/sensors/light/light.py [--on] [--off] [--brightness INT%]
@@ -468,7 +510,8 @@ the web UI (or `POST /schedule`) compiles your saved schedule into crontab lines
 tagged with `# garden-of-eden` and rewrites only those, so it owns them from then
 on. What it generates looks like this:
 
-```text
+```
+text
 0 6 * * 1 /usr/local/bin/light ramp 30 15 # garden-of-eden
 0 22 * * 1 /usr/local/bin/light ramp 0 15 # garden-of-eden
 0 6 * * 1 /usr/local/bin/water 180 # garden-of-eden
@@ -477,7 +520,8 @@ on. What it generates looks like this:
 
 Those two commands are symlinks created by `scripts/setup.sh`:
 
-```bash
+```
+bash
 sudo ln -fs ~/garden-of-eden/scripts/light.sh /usr/local/bin/light
 sudo ln -fs ~/garden-of-eden/scripts/water.sh /usr/local/bin/water
 ```
@@ -488,7 +532,8 @@ sudo ln -fs ~/garden-of-eden/scripts/water.sh /usr/local/bin/water
 > enabled while nothing actually runs. If your lights and pump never seem to
 > fire, check this first:
 
-```bash
+```
+bash
 ls -la /usr/local/bin/light /usr/local/bin/water
 journalctl -u cron | tail -20
 ```
@@ -499,7 +544,8 @@ are missing, so this failure should now be visible rather than silent.
 To confirm a job works before waiting a day for it, run it by hand. Note these
 drive real hardware:
 
-```bash
+```
+bash
 /usr/local/bin/light 30      # set brightness to 30%
 /usr/local/bin/water 180     # run the pump for 3 minutes
 /usr/local/bin/light          # no argument prints usage and touches nothing
@@ -517,13 +563,15 @@ camera frames. Frames are captured by a systemd timer and stored under
 
 This needs two things, both installed by `scripts/setup.sh`:
 
-```bash
+```
+bash
 sudo apt install -y ffmpeg      # to build the video
 ```
 
 **Capture timer.** Install it with:
 
-```bash
+```
+bash
 sudo scripts/install-timelapse-timer.sh
 ```
 
@@ -542,7 +590,8 @@ The unit files are generated rather than committed because they embed
 
 To capture one frame immediately without waiting for the timer:
 
-```bash
+```
+bash
 scripts/capture-frames.sh
 ```
 
@@ -692,7 +741,8 @@ Using `gpiozero` to leverage `pigpio` daemon which is hardware driven and more e
 
 ## Folder Structure
 
-```text
+```
+text
 <gardyn-of-eden>
 ├── run.py
 ├── app

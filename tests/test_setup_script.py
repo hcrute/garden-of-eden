@@ -318,5 +318,85 @@ class MqttServiceInstallerTestCase(unittest.TestCase):
         self.assertIn("scripts/install-mqtt-service.sh", readme)
 
 
+class MqttBrokerConfigTestCase(unittest.TestCase):
+    """scripts/install-mqtt-broker.sh opens the broker to other machines.
+
+    Getting this wrong fails quietly: mosquitto only creates its implicit
+    loopback listener when no `listener` is defined, so a config that is
+    reachable from the LAN but omits loopback leaves mqtt.py on the Pi unable
+    to reach its own broker -- a reconnect loop that reads like a network
+    fault rather than a config mistake.
+    """
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.installer = root / "scripts" / "install-mqtt-broker.sh"
+        self.uninstaller = (root / "scripts" / "uninstall.sh").read_text()
+        self.src = self.installer.read_text() if self.installer.exists() else ""
+
+    def test_installer_exists_and_parses(self):
+        self.assertTrue(self.installer.exists(), "install-mqtt-broker.sh is missing")
+        proc = subprocess.run(["bash", "-n", str(self.installer)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_configures_loopback_and_remote_listeners(self):
+        """Both, always. See the class docstring for why this is a trap."""
+        self.assertIn("listener $MQTT_PORT 127.0.0.1", self.src)
+        self.assertIn("listener $MQTT_PORT $REMOTE_BIND", self.src)
+
+    def test_requires_authentication(self):
+        self.assertIn("allow_anonymous false", self.src)
+        self.assertIn("password_file $PASSWD_FILE", self.src)
+
+    def test_writes_a_dropin_not_the_packaged_config(self):
+        # conf.d survives a package upgrade; editing mosquitto.conf does not.
+        self.assertIn("/etc/mosquitto/conf.d/20-gardyn-remote.conf", self.src)
+        self.assertNotIn(">/etc/mosquitto/mosquitto.conf", self.src)
+        self.assertNotIn("nano /etc/mosquitto/mosquitto.conf", self.src)
+
+    def test_password_never_reaches_argv_or_the_shell(self):
+        # `mosquitto_passwd -b file user $PASS` would expose the password in
+        # `ps` for anyone on the box, and would usually land in shell history.
+        self.assertNotIn("mosquitto_passwd -b", self.src)
+        self.assertIn("mosquitto_passwd -c", self.src)
+        # The password reaches the tool on stdin, twice, for prompt+confirm.
+        self.assertIn(
+            r"""printf '%s\n%s\n' "$MQTT_PASS" "$MQTT_PASS" | mosquitto_passwd -c""",
+            self.src,
+        )
+        self.assertNotIn("echo $MQTT_PASS", self.src)
+
+    def test_refuses_the_shipped_placeholder_password(self):
+        # .env-dist ships somepassword; configuring auth with it would be
+        # worse than not configuring auth at all.
+        for bad in ("somepassword", "changeme", "password"):
+            with self.subTest(bad=bad):
+                self.assertIn(bad, self.src)
+
+    def test_credentials_come_from_env(self):
+        # One source of truth, shared with mqtt.py, so they cannot drift.
+        self.assertIn("env_get MQTT_USERNAME", self.src)
+        self.assertIn("env_get MQTT_PASSWORD", self.src)
+
+    def test_rolls_back_if_mosquitto_will_not_start(self):
+        # Writing the drop-in then failing to start would leave the broker
+        # down with no hint as to why.
+        self.assertIn("rolling back", self.src.lower())
+        self.assertIn('rm -f "$CONF_FILE"', self.src)
+
+    def test_defaults_to_the_tailnet_address(self):
+        self.assertIn("tailscale0", self.src)
+        self.assertIn("MQTT_BIND", self.src)
+
+    def test_uninstall_removes_the_listener_and_credentials(self):
+        # Leaving these behind keeps port 1883 open after an uninstall.
+        self.assertIn("/etc/mosquitto/conf.d/20-gardyn-remote.conf", self.uninstaller)
+        self.assertIn("/etc/mosquitto/passwd", self.uninstaller)
+
+    def test_installer_is_referenced_by_the_docs(self):
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        self.assertIn("scripts/install-mqtt-broker.sh", readme)
+
+
 if __name__ == "__main__":
     unittest.main()

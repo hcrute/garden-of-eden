@@ -30,6 +30,15 @@ sudo udevadm control --reload-rules 2>/dev/null
 echo "Removing our cron entries..."
 ( crontab -l 2>/dev/null | grep -v 'garden-of-eden' | grep -v 'garden-timelapse' ) | crontab - 2>/dev/null
 
+# The broker drop-in keeps 1883 reachable off-box. Leaving it behind after an
+# uninstall would keep a network listener and its credentials in place with
+# nothing left to use them, so remove both it and the password file.
+if [ -f /etc/mosquitto/conf.d/20-gardyn-remote.conf ]; then
+    echo "Closing the remote MQTT listener..."
+    sudo rm -f /etc/mosquitto/conf.d/20-gardyn-remote.conf /etc/mosquitto/passwd
+    sudo systemctl restart mosquitto 2>/dev/null
+fi
+
 echo "Restoring backed-up system files..."
 for f in /boot/firmware/config.txt /boot/config.txt /etc/modules /etc/hosts; do
     if [ -f "${f}.garden.bak" ]; then
