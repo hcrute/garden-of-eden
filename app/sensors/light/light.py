@@ -27,10 +27,14 @@ class Light:
         # routes and their devices) paid for it. The hourly timelapse capture
         # was the worst offender: it turned the light off once an hour, on no
         # logged write, because the damage happens inside gpiozero.
+        # NB initial_value, not value: PWMLED's constructor keyword is
+        # initial_value. Passing `value` raises TypeError from
+        # PWMOutputDevice.__init__, which the routes catch and swallow -- the
+        # device then silently never initialises at all.
         self.led = PWMLED(
             self.pin,
             pin_factory=self.pin_factory,
-            value=self._current_value(),
+            initial_value=self._current_value(),
         )
         self.set_frequency(frequency)
 

@@ -20,10 +20,14 @@ class Pump:
         # and drives the pin low on construction, so simply importing this
         # module used to cut the pump -- which is the safe direction here, but
         # it also silently cancelled a run in progress. See Light.__init__.
+        # NB initial_value, not value: PWMLED's constructor keyword is
+        # initial_value. Passing `value` raises TypeError from
+        # PWMOutputDevice.__init__, which the routes catch and swallow -- the
+        # device then silently never initialises at all.
         self.pump = PWMLED(
             self.pin,
             pin_factory=self.pin_factory,
-            value=self._current_value(),
+            initial_value=self._current_value(),
         )
         self.set_frequency(frequency)
 

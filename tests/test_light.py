@@ -79,21 +79,21 @@ class LightConstructionIsNonDestructive(unittest.TestCase):
 
     def test_construction_preserves_a_lit_pin(self):
         mock_led, _ = self._build(128)  # ~50% on a 0-255 scale
-        self.assertAlmostEqual(mock_led.call_args.kwargs["value"], 128 / 255, places=3)
+        self.assertAlmostEqual(mock_led.call_args.kwargs["initial_value"], 128 / 255, places=3)
 
     def test_construction_preserves_a_full_pin(self):
         mock_led, _ = self._build(255)
-        self.assertAlmostEqual(mock_led.call_args.kwargs["value"], 1.0, places=3)
+        self.assertAlmostEqual(mock_led.call_args.kwargs["initial_value"], 1.0, places=3)
 
     def test_construction_preserves_an_off_pin(self):
         mock_led, _ = self._build(0)
-        self.assertEqual(mock_led.call_args.kwargs["value"], 0.0)
+        self.assertEqual(mock_led.call_args.kwargs["initial_value"], 0.0)
 
     def test_construction_never_exceeds_full_scale(self):
         # A driver that returned nonsense must not wrap into a valid-looking
         # duty cycle and overdrive the MOSFET.
         mock_led, _ = self._build(9999)
-        self.assertLessEqual(mock_led.call_args.kwargs["value"], 1.0)
+        self.assertLessEqual(mock_led.call_args.kwargs["initial_value"], 1.0)
 
     def test_unreadable_pin_falls_back_to_off_rather_than_raising(self):
         with (
@@ -103,7 +103,7 @@ class LightConstructionIsNonDestructive(unittest.TestCase):
         ):
             mock_pi.return_value.get_PWM_dutycycle.side_effect = OSError("pigpiod went away")
             Light(18)  # must not raise: construction runs at import time
-            self.assertEqual(mock_led.call_args.kwargs["value"], 0.0)
+            self.assertEqual(mock_led.call_args.kwargs["initial_value"], 0.0)
 
 
 if __name__ == "__main__":
