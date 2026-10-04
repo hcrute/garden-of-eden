@@ -518,6 +518,48 @@ text
 0 12 * * 1 /usr/local/bin/water 180 # garden-of-eden
 ```
 
+#### Saving a schedule also applies it now
+
+Cron only ever acts at a window boundary. Editing the schedule at 16:00 would
+otherwise leave the machine doing whatever it was doing before, so after an
+unrelated fault -- a reboot, a manual override, the pin being zeroed -- the
+lights could stay off for hours while the schedule said they should be on.
+
+So `POST /schedule` also reconciles the lights with the schedule immediately:
+
+| Schedule says | Hardware is | Result |
+| --- | --- | --- |
+| inside a light window | off | turned **on** at the scheduled brightness |
+| inside a light window | already lit | left alone (a manual brightness is not overridden) |
+| outside every window | on | turned **off** |
+| outside every window | off | nothing |
+| lights not scheduled | any | nothing -- no opinion is expressed |
+
+The response says what happened, so the UI can show it rather than the save
+silently changing the lights:
+
+```json
+{"lights_reconciled": true, "action": "turned on", "brightness": 30,
+ "reason": "inside a light window scheduled for today"}
+```
+
+`GET /schedule` also returns `lights_now` -- what the schedule says the lights
+should be doing at this instant -- so the UI can show a mismatch before you
+change anything.
+
+Two deliberate limits:
+
+- **A schedule with lights disabled expresses no opinion**, so saving an
+  unrelated change cannot switch the lights off on a machine that has never had
+  a light schedule.
+- **The pump is not reconciled.** Its runs are doses at fixed times, not a
+  state to hold, so there is no "should be on now" to enforce.
+
+A window that wraps past midnight (22:00-06:00) is handled, including the
+early-morning half, which uses the *previous* day's brightness.
+
+#### The symlinks cron calls
+
 Those two commands are symlinks created by `scripts/setup.sh`:
 
 ```

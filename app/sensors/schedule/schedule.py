@@ -176,6 +176,81 @@ def _vacation_cron_lines():
     return lines
 
 
+def _minutes(window):
+    """``(start_minute, end_minute)`` for a window, both 0-1439."""
+    on_m, on_h = _hh_mm(window.get("onTime", "08:00"))
+    off_m, off_h = _hh_mm(window.get("offTime", "22:00"))
+    return on_h * 60 + on_m, off_h * 60 + off_m
+
+
+def _active_window(schedule, now):
+    """The light window covering ``now``, or None.
+
+    Handles a window that wraps past midnight (22:00-06:00), whose early-
+    morning half belongs to the *previous* day's entry -- and to that entry's
+    brightness, not today's.
+    """
+    lights = schedule["lights"]
+    today = DAYS[now.weekday()]
+    yesterday = DAYS[(now.weekday() - 1) % 7]
+    cur = now.hour * 60 + now.minute
+
+    for window in lights["days"].get(today, []):
+        start, end = _minutes(window)
+        if start == end:
+            continue  # zero-length window; never matches
+        if start < end:
+            if start <= cur < end:
+                return window
+        elif cur >= start:
+            # Overnight window, still in its evening half.
+            return window
+
+    for window in lights["days"].get(yesterday, []):
+        start, end = _minutes(window)
+        if start > end and cur < end:
+            return window
+    return None
+
+
+def light_state_now(schedule, now=None):
+    """What the lights should be doing at ``now`` according to ``schedule``.
+
+    Returns ``None`` when the schedule does not manage the lights at all, so
+    callers can distinguish "off because the schedule says so" from "this
+    schedule has no opinion". Otherwise::
+
+        {"on": bool, "brightness": int|None, "reason": str}
+
+    Pure: it touches no hardware, which is what makes the reconciliation in the
+    route layer testable.
+    """
+    schedule = normalize_schedule(schedule)
+    now = now or datetime.datetime.now()
+
+    if is_vacation_active(schedule, today=now.date()):
+        return {"on": False, "brightness": None, "reason": "vacation mode is active"}
+
+    if not schedule["lights"]["enabled"]:
+        # Deliberately no opinion: a machine with no light schedule configured
+        # should not have its lights switched off because someone saved an
+        # unrelated part of the schedule.
+        return None
+
+    window = _active_window(schedule, now)
+    if window is None:
+        return {
+            "on": False,
+            "brightness": None,
+            "reason": "outside every light window scheduled for today",
+        }
+    return {
+        "on": True,
+        "brightness": int(window.get("brightness", 70)),
+        "reason": "inside a light window scheduled for today",
+    }
+
+
 def build_cron_lines(schedule):
     """Compile a (normalized) schedule dict into a list of marked crontab lines."""
     schedule = normalize_schedule(schedule)
