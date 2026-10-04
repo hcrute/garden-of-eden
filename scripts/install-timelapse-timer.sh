@@ -19,7 +19,8 @@
 # schedule with a deprecation warning; it cannot express anything under a
 # minute, which OnCalendar does not support either.
 #
-# Usage: sudo scripts/install-timelapse-timer.sh [--schedule NAME|EXPR] [--list-presets]
+# Usage: sudo scripts/install-timelapse-timer.sh [--schedule NAME|EXPR]
+#                                          [--list-presets] [--dry-run] [--resolve]
 
 set -euo pipefail
 
@@ -28,6 +29,7 @@ INSTALL_USER="${SUDO_USER:-$USER}"
 RUN_USER="${INSTALL_USER}"
 SCHEDULE="${TIMELAPSE_SCHEDULE:-}"
 RESOLVE_ONLY=false
+DRY_RUN=false
 
 # Back-compat: TIMELAPSE_INTERVAL (seconds) predates OnCalendar support.
 # OnCalendar cannot express a sub-minute period, so anything under 60s is
@@ -72,6 +74,14 @@ while [ $# -gt 0 ]; do
         --list-presets)
             list_presets
             exit 0
+            ;;
+        --dry-run)
+            # Render both units to stdout and exit: no root, nothing written.
+            # This exists so the whole generation path can be exercised by the
+            # test suite -- a missing variable here is otherwise invisible
+            # until someone runs the installer for real.
+            DRY_RUN=true
+            shift
             ;;
         --resolve)
             # Print the resolved OnCalendar expression and exit, without
@@ -123,25 +133,14 @@ if [ "$RESOLVE_ONLY" = "true" ]; then
     exit 0
 fi
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "This installs system units and needs sudo." >&2
-    echo "Usage: sudo $0" >&2
-    exit 1
-fi
-
-# The service runs unprivileged as the repo owner, not root, so the GPIO and
-# pigpio permissions from setup.sh's group membership apply.
-if ! id -u "$RUN_USER" >/dev/null 2>&1; then
-    echo "User '$RUN_USER' does not exist. Run under the account that owns the checkout." >&2
-    exit 1
-fi
-
 CAPTURE="${GOE_PATH}/scripts/capture-frames.sh"
 if [ ! -x "$CAPTURE" ]; then
     echo "Missing or not executable: $CAPTURE" >&2
     exit 1
 fi
 
+service_file=$(mktemp)
+timer_file=$(mktemp)
 trap 'rm -f "$service_file" "$timer_file"' EXIT
 
 cat > "$service_file" <<EOF
@@ -173,6 +172,27 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+if [ "$DRY_RUN" = "true" ]; then
+    echo "=== garden-timelapse.service ==="
+    cat "$service_file"
+    echo
+    echo "=== garden-timelapse.timer ==="
+    cat "$timer_file"
+    exit 0
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This installs system units and needs sudo." >&2
+    echo "Usage: sudo $0" >&2
+    exit 1
+fi
+
+# The service runs unprivileged as the repo owner, not root, so the GPIO and
+# pigpio permissions from setup.sh's group membership apply.
+if ! id -u "$RUN_USER" >/dev/null 2>&1; then
+    echo "User '$RUN_USER' does not exist. Run under the account that owns the checkout." >&2
+    exit 1
+fi
 
 install -m 644 "$service_file" /etc/systemd/system/garden-timelapse.service
 install -m 644 "$timer_file" /etc/systemd/system/garden-timelapse.timer

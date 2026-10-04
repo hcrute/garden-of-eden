@@ -260,6 +260,50 @@ class TimelapseTimerInstallerTestCase(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("under a minute", proc.stderr)
 
+    def _run_installer(self, *args):
+        full = dict(os.environ)
+        full["TIMELAPSE_PYTHON"] = sys.executable
+        return subprocess.run(
+            ["bash", str(self.installer), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=full,
+            timeout=60,
+        )
+
+    def test_dry_run_generates_both_units_without_root(self):
+        # `set -u` means any variable that is referenced before it is assigned
+        # aborts the script. That is invisible to `bash -n` and to the
+        # assertIn-style tests above -- two real bugs (a deleted mktemp pair,
+        # then a CAPTURE used by the heredoc before its assignment) reached a
+        # user's terminal this way. Running the generation path is the only
+        # thing that actually catches them.
+        proc = self._run_installer("--schedule", "daily", "--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("=== garden-timelapse.service ===", proc.stdout)
+        self.assertIn("=== garden-timelapse.timer ===", proc.stdout)
+
+    def test_dry_run_emits_the_resolved_oncalendar_for_every_preset(self):
+        for name, expr in config.TIMELAPSE_SCHEDULE_PRESETS.items():
+            with self.subTest(preset=name):
+                proc = self._run_installer("--schedule", name, "--dry-run")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn(f"OnCalendar={expr}", proc.stdout)
+
+    def test_generated_service_points_at_the_capture_script(self):
+        proc = self._run_installer("--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("ExecStart=", proc.stdout)
+        self.assertIn("scripts/capture-frames.sh", proc.stdout)
+        self.assertIn("Type=oneshot", proc.stdout)
+
+    def test_dry_run_writes_nothing_outside_tmp(self):
+        # It must be safe on a live machine: no units written, no systemctl.
+        proc = self._run_installer("--dry-run")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Installed.", proc.stdout)
+
 
 class TimelapseFrameExportTestCase(unittest.TestCase):
     """frame_files / zip_frames back the download endpoint."""
