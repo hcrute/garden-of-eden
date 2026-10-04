@@ -125,6 +125,20 @@ class SetupScriptTestCase(unittest.TestCase):
                     broken.append(f"{md.relative_to(docs)}: {target}")
         self.assertEqual(broken, [], "broken link(s) in docs/:\n" + "\n".join(broken))
 
+    def test_lib_module_is_named_for_its_contents(self):
+        """app/lib/lib.py became app/lib/guards.py."""
+        root = SETUP.parent.parent
+        lib = root / "app" / "lib"
+        self.assertTrue((lib / "guards.py").exists())
+        self.assertFalse((lib / "lib.py").exists(), "app/lib/lib.py should be renamed")
+        # guards.py is skipped: its docstring records the old name deliberately.
+        offenders = [
+            str(p.relative_to(root))
+            for p in (root / "app").rglob("*.py")
+            if p.name != "guards.py" and "app.lib.lib" in p.read_text(errors="ignore")
+        ]
+        self.assertEqual(offenders, [], f"stale app.lib.lib import(s): {offenders}")
+
 
 if __name__ == "__main__":
     unittest.main()

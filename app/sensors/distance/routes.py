@@ -3,8 +3,8 @@ import logging
 from flask import Blueprint, jsonify
 
 import config
+from app.lib.guards import check_sensor_guard
 from app.lib.hardware import get_pin_factory
-from app.lib.lib import check_sensor_guard
 from app.lib.water import gallons_remaining
 
 from .distance import Distance as DistanceControl

@@ -1,3 +1,13 @@
+"""Request guards shared by the route modules.
+
+``check_sensor_guard`` turns a hardware failure into a 503 instead of a 500, so
+clients can tell "bad request" from "sensor unavailable", and ``parse_level``
+validates the 0..100 levels the light and pump accept.
+
+Renamed from app/lib/lib.py, which made "app.lib.lib" a mouthful to say and
+told you nothing about the contents.
+"""
+
 import logging
 from functools import wraps
 

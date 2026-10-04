@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify
 
-from app.lib.lib import check_sensor_guard
+from app.lib.guards import check_sensor_guard
 
 from .pcb_temp import get_pcb_temperature
 

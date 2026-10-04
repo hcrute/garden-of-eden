@@ -2,7 +2,7 @@ import unittest
 
 from flask import Flask, jsonify
 
-from app.lib.lib import check_sensor_guard, parse_level
+from app.lib.guards import check_sensor_guard, parse_level
 
 
 class CheckSensorGuardTestCase(unittest.TestCase):
