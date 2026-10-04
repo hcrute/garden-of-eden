@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/scripts/bash
 
 # Configuration
 BIN_DIR=$(dirname $(readlink -f $0))
@@ -17,7 +17,7 @@ for _arg in "$@"; do
         -v|--verbose) VERBOSE=true ;;
         -h|--help)
             cat <<'USAGE'
-Usage: bin/setup.sh [--dry-run] [--yes] [--verbose]
+Usage: scripts/setup.sh [--dry-run] [--yes] [--verbose]
 
   --dry-run   Print every system change that would be made, then exit.
               Makes NO changes. Run this first if you're unsure.
@@ -25,7 +25,7 @@ Usage: bin/setup.sh [--dry-run] [--yes] [--verbose]
   --verbose   Extra logging.
 
 setup.sh backs up every system file it edits to <file>.garden.bak, and
-bin/uninstall.sh reverses the install. See docs/access.md.
+scripts/uninstall.sh reverses the install. See docs/access.md.
 USAGE
             exit 0 ;;
     esac
@@ -59,7 +59,7 @@ function log {
 }
 
 # Make a one-time backup of a system file before modifying it, so every change
-# is reversible (bin/uninstall.sh restores these).
+# is reversible (scripts/uninstall.sh restores these).
 function _backup_file {
     local f="$1"
     if [ -f "$f" ] && [ ! -f "${f}.garden.bak" ]; then
@@ -276,9 +276,9 @@ function check_i2c_sensors {
 }
 
 function create_bash_script_symlinks() {
-    sudo ln -fs "${INSTALL_DIR}/bin/light.sh" "/usr/local/bin/light"
-    sudo ln -fs "${INSTALL_DIR}/bin/water.sh" "/usr/local/bin/water"
-    sudo ln -fs "${INSTALL_DIR}/bin/update.sh" "/usr/local/bin/garden-update"
+    sudo ln -fs "${INSTALL_DIR}/scripts/light.sh" "/usr/local/bin/light"
+    sudo ln -fs "${INSTALL_DIR}/scripts/water.sh" "/usr/local/bin/water"
+    sudo ln -fs "${INSTALL_DIR}/scripts/update.sh" "/usr/local/bin/garden-update"
 }
 
 # Warn early if we're not on a supported Raspberry Pi OS. pigpio and the GPIO
@@ -378,7 +378,7 @@ User=$USER
 WorkingDirectory=$INSTALL_DIR
 # Wait (up to 60s) for pigpiod to accept connections before starting, so the
 # service doesn't crash-restart during the boot race.
-ExecStartPre=/bin/bash -c 'for i in \$(seq 1 60); do (echo > /dev/tcp/127.0.0.1/8888) >/dev/null 2>&1 && exit 0; sleep 1; done; exit 0'
+ExecStartPre=/scripts/bash -c 'for i in \$(seq 1 60); do (echo > /dev/tcp/127.0.0.1/8888) >/dev/null 2>&1 && exit 0; sleep 1; done; exit 0'
 ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/mqtt.py
 Restart=always
 RestartSec=5
@@ -426,13 +426,13 @@ EOF
 }
 
 # Nightly auto-update: a timer that fast-forwards the branch and restarts the
-# services only when something changed (bin/autoupdate.sh does the safe pull).
+# services only when something changed (scripts/autoupdate.sh does the safe pull).
 function setup_autoupdate {
     local svc="$INSTALL_DIR/services/etc/systemd/system/garden-autoupdate.service"
     local tmr="$INSTALL_DIR/services/etc/systemd/system/garden-autoupdate.timer"
     mkdir -p "$(dirname "$svc")"
 
-    chmod +x "$INSTALL_DIR/bin/autoupdate.sh"
+    chmod +x "$INSTALL_DIR/scripts/autoupdate.sh"
 
     # Let the (unattended) updater restart just these two services without a
     # password. Nothing else is granted.
@@ -440,7 +440,7 @@ function setup_autoupdate {
     local tmp_sudoers
     tmp_sudoers=$(mktemp)
     cat > "$tmp_sudoers" <<EOF
-$USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart mqtt.service, /usr/bin/systemctl restart garden-api.service
+$USER ALL=(root) NOPASSWD: /usr/scripts/systemctl restart mqtt.service, /usr/scripts/systemctl restart garden-api.service
 EOF
     if sudo visudo -cf "$tmp_sudoers" >/dev/null 2>&1; then
         sudo cp "$tmp_sudoers" "$sudoers"
@@ -460,7 +460,7 @@ Wants=network-online.target
 Type=oneshot
 User=$USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/bin/autoupdate.sh
+ExecStart=$INSTALL_DIR/scripts/autoupdate.sh
 EOF
 
     cat > $tmr <<EOF
@@ -491,7 +491,7 @@ function setup_timelapse_timer {
     svc=$(mktemp)
     tmr=$(mktemp)
 
-    chmod +x "$INSTALL_DIR/bin/capture-frames.sh"
+    chmod +x "$INSTALL_DIR/scripts/capture-frames.sh"
 
     # Take the first frame a couple of minutes after boot rather than only on
     # the timer, so a fresh install has something to build from immediately.
@@ -505,7 +505,7 @@ Wants=pigpiod.service
 Type=oneshot
 User=$USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/bin/capture-frames.sh
+ExecStart=$INSTALL_DIR/scripts/capture-frames.sh
 EOF
 
     cat > "$tmr" <<EOF
@@ -533,12 +533,12 @@ EOF
 # Verify the REST API responds, if it is running (issue #51 checklist item).
 function verify_api {
     if command -v curl >/dev/null 2>&1 && curl -s -o /dev/null -w '' "http://localhost:5000/temperature" 2>/dev/null; then
-        log_info "Running API smoke test (bin/api-test.sh)"
-        bash "${INSTALL_DIR}/bin/api-test.sh" >/dev/null 2>&1 \
+        log_info "Running API smoke test (scripts/api-test.sh)"
+        bash "${INSTALL_DIR}/scripts/api-test.sh" >/dev/null 2>&1 \
             && log_pass "API smoke test passed." \
-            || log_error "API smoke test reported errors. Start it with 'python run.py' and re-run bin/api-test.sh."
+            || log_error "API smoke test reported errors. Start it with 'python run.py' and re-run scripts/api-test.sh."
     else
-        log_info "REST API not running; skipping smoke test. Start it with 'python run.py' then run bin/api-test.sh."
+        log_info "REST API not running; skipping smoke test. Start it with 'python run.py' then run scripts/api-test.sh."
     fi
 }
 
@@ -598,7 +598,7 @@ function verify_install {
     fi
 
     if [ "$failed" -ne 0 ]; then
-        log_error "Install verification found problems (see above). Re-run bin/setup.sh to repair."
+        log_error "Install verification found problems (see above). Re-run scripts/setup.sh to repair."
         log_info "Until /usr/local/bin/light and /usr/local/bin/water exist, the light and pump schedule will NOT run."
         return 1
     fi
@@ -629,7 +629,7 @@ function print_plan {
      archived for the timelapse videos
  11. Verify: check the symlinks, units and .env actually landed, and report
      anything missing (a partial install otherwise looks healthy)
-Reversible with: bin/uninstall.sh
+Reversible with: scripts/uninstall.sh
 ============================================================
 
 PLAN

@@ -213,7 +213,7 @@ PODS_FILE = os.path.expanduser(os.getenv("PODS_FILE", "~/.garden_pods.json"))
 # ---------------------------------------------------------------------------
 
 # Stores the model picked in Settings. Deliberately a separate file from .env:
-# .env holds credentials and is written by bin/setup.sh, so rewriting it from a
+# .env holds credentials and is written by scripts/setup.sh, so rewriting it from a
 # web request would risk corrupting the service config. Read on every call, so a
 # change applies without restarting the service.
 HARDWARE_FILE = os.path.expanduser(os.getenv("HARDWARE_FILE", "~/.garden_hardware.json"))

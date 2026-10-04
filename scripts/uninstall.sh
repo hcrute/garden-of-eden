@@ -1,5 +1,5 @@
-#!/bin/bash
-# Reverse bin/setup.sh: stop and remove the Garden of Eden services, restore the
+#!/scripts/bash
+# Reverse scripts/setup.sh: stop and remove the Garden of Eden services, restore the
 # system files that setup.sh backed up, and remove our cron entries.
 #
 # Left in place on purpose (harmless, and annoying/risky to revert): installed

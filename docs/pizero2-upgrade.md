@@ -16,7 +16,7 @@ MQTT + camera capture + the REST API at once.
    git clone https://github.com/iot-root/garden-of-eden.git
    cd garden-of-eden
    cp .env-dist .env && nano .env      # set MQTT + identity
-   ./bin/setup.sh
+   ./scripts/setup.sh
    ```
 4. **Verify:** `curl localhost:5000/system` should report your model, and
    `sudo systemctl status mqtt.service` should be active.

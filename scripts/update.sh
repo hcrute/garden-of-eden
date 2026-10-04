@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/scripts/bash
 # Update an existing Garden of Eden install in place (issue #14):
 # pull latest code, refresh Python deps, and restart services.
 set -euo pipefail
@@ -19,7 +19,7 @@ if [ -d "$INSTALL_DIR/venv" ]; then
     pip install -r "$INSTALL_DIR/requirements.txt"
     deactivate
 else
-    echo "WARNING: venv not found; run bin/setup.sh first." >&2
+    echo "WARNING: venv not found; run scripts/setup.sh first." >&2
 fi
 
 # Restart services if installed.

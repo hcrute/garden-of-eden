@@ -90,9 +90,9 @@ A simulator runs the whole stack with fake hardware so you can try the web UI,
 REST API, and Home Assistant discovery on your laptop:
 
 ```bash
-python -m venv .venv-dev && .venv-dev/bin/pip install -r requirements-dev.txt
-.venv-dev/bin/python -m simulator.serve     # http://localhost:5000/
-.venv-dev/bin/python -m simulator.mqtt_sim  # MQTT for Home Assistant (needs a broker)
+python -m venv .venv-dev && .venv-dev/scripts/pip install -r requirements-dev.txt
+.venv-dev/scripts/python -m simulator.serve     # http://localhost:5000/
+.venv-dev/scripts/python -m simulator.mqtt_sim  # MQTT for Home Assistant (needs a broker)
 ```
 
 See [`docs/simulator.md`](docs/simulator.md).
@@ -165,7 +165,7 @@ nano .env
 Install dependencies, and run services pigpiod, mqtt.service
 
 ```
-./bin/setup.sh`
+./scripts/setup.sh`
 ```
 
 Ensure the pigpiod daemon is running
@@ -177,14 +177,14 @@ sudo systemctl status mqtt.service
 
 ### Services and Scheduled Jobs
 
-`./bin/setup.sh` installs and enables everything the unit needs at boot:
+`./scripts/setup.sh` installs and enables everything the unit needs at boot:
 
 | Unit | What it does |
 |---|---|
 | `pigpiod` | GPIO daemon; every driver talks to it |
 | `mqtt.service` | `mqtt.py` — MQTT control, Home Assistant discovery, image publisher |
 | `garden-api.service` | REST API + web UI, served by Waitress on port 5000 |
-| `garden-autoupdate.timer` | nightly `bin/update.sh` |
+| `garden-autoupdate.timer` | nightly `scripts/update.sh` |
 
 Confirm they are up:
 
@@ -275,7 +275,7 @@ Check the configuration works:
 `sudo journalctl -xeu mosquitto.service`
 
 
-If you havent already, run `./bin/setup.sh`, this will install all OS dependencies, install the python libs, and run services pigpiod, mqtt.service
+If you havent already, run `./scripts/setup.sh`, this will install all OS dependencies, install the python libs, and run services pigpiod, mqtt.service
 
 Ensure the pigpiod, mqtt, and broker daemon is running
 
@@ -327,7 +327,7 @@ Test options:
 
 ```bash
 # REST endpoints
-./bin/api-test.sh
+./scripts/api-test.sh
 
 # unit tests (the -t . -s tests form is required, see Developing below)
 python -m unittest discover -t . -s tests -p 'test_*.py'
@@ -344,7 +344,7 @@ Short version of how to work on this without a Pi in front of you, and how to ad
 
 ```bash
 python -m venv .venv-dev
-.venv-dev/bin/pip install -r requirements-dev.txt
+.venv-dev/scripts/pip install -r requirements-dev.txt
 ```
 
 That's the pure-Python dev set. The Pi deps in `requirements.txt` (gpiozero, pigpio, the Adafruit libs) are not needed and won't install cleanly on a laptop anyway.
@@ -352,9 +352,9 @@ That's the pure-Python dev set. The Pi deps in `requirements.txt` (gpiozero, pig
 #### Run the checks
 
 ```bash
-.venv-dev/bin/python -m unittest discover -t . -s tests -p 'test_*.py'
-.venv-dev/bin/ruff check .
-.venv-dev/bin/black --check .
+.venv-dev/scripts/python -m unittest discover -t . -s tests -p 'test_*.py'
+.venv-dev/scripts/ruff check .
+.venv-dev/scripts/black --check .
 ```
 
 CI runs exactly these three on every PR. The `-t . -s tests` part matters: `tests/__init__.py` installs fake hardware modules before anything under `app/` is imported, and plain `python -m unittest` skips that bootstrap and fails on the first `import gpiozero`.
@@ -454,11 +454,11 @@ on. What it generates looks like this:
 0 12 * * 1 /usr/local/bin/water 180 # garden-of-eden
 ```
 
-Those two commands are symlinks created by `bin/setup.sh`:
+Those two commands are symlinks created by `scripts/setup.sh`:
 
 ```bash
-sudo ln -fs ~/garden-of-eden/bin/light.sh /usr/local/bin/light
-sudo ln -fs ~/garden-of-eden/bin/water.sh /usr/local/bin/water
+sudo ln -fs ~/garden-of-eden/scripts/light.sh /usr/local/bin/light
+sudo ln -fs ~/garden-of-eden/scripts/water.sh /usr/local/bin/water
 ```
 
 > **If those symlinks are missing, cron still fires every job and every one

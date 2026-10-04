@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/scripts/bash
 # Nightly auto-update (invoked by garden-autoupdate.timer).
 #
 # Fast-forwards the current branch from origin and, ONLY if something actually

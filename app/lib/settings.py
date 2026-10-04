@@ -8,7 +8,7 @@ service restart. This module lets the web UI pick the model instead.
 Two decisions worth stating:
 
 - It is stored in its own small JSON file rather than written back into ``.env``.
-  ``.env`` holds the admin password and the Groq key, and ``bin/setup.sh``
+  ``.env`` holds the admin password and the Groq key, and ``scripts/setup.sh``
   owns it; rewriting it from a web request risks corrupting the service config.
 - It is read on every call, never cached at import. That is what lets a change
   take effect immediately instead of needing a restart.

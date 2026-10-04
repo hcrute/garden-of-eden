@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/scripts/bash
 # Note requires rest API service to be running `python run.py`
 # examples:
 # curl http://localhost:5000/distance/measure

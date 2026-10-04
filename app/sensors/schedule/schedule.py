@@ -3,7 +3,7 @@ Pi's crontab (issue #32).
 
 The schedule is persisted as JSON and compiled into crontab lines tagged with a
 marker comment so we can rewrite only our own entries. Cron invokes the
-``light`` and ``water`` CLI symlinks installed by bin/setup.sh.
+``light`` and ``water`` CLI symlinks installed by scripts/setup.sh.
 
 Each of ``lights`` and ``pump`` holds a ``days`` map keyed by weekday
 (``mon``..``sun``); every weekday carries a list of entries, so you can set as
@@ -233,7 +233,7 @@ def _write_crontab(lines):
 def missing_scripts():
     """Return the scheduled-command paths that are not installed on this host.
 
-    ``bin/setup.sh`` symlinks these into /usr/local/bin. If that step never ran
+    ``scripts/setup.sh`` symlinks these into /usr/local/bin. If that step never ran
     (or the install moved), cron still fires every job and each one fails with
     "No such file or directory" — silently, because cron only mails the user.
     The schedule then *looks* configured while nothing happens. Surfacing this

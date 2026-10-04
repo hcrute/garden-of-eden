@@ -1123,7 +1123,7 @@
           warn.hidden = false;
           warn.innerHTML = "<b>Schedule is not running.</b> These commands are missing, so every cron job fails silently: <code>" +
             (s.scripts_missing || []).join("</code>, <code>") +
-            "</code>. Restore them with <code>bin/setup.sh</code> (or the two <code>ln -fs</code> symlinks into /usr/local/bin).";
+            "</code>. Restore them with <code>scripts/setup.sh</code> (or the two <code>ln -fs</code> symlinks into /usr/local/bin).";
         } else {
           warn.hidden = true;
         }

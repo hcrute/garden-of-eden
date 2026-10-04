@@ -1,4 +1,4 @@
-"""Static checks for bin/setup.sh.
+"""Static checks for scripts/setup.sh.
 
 The install script only ever runs on a fresh Pi, so a syntax error or a dropped
 verification step would otherwise surface at install time and nowhere else.
@@ -6,13 +6,14 @@ These are content and parse assertions rather than behaviour tests -- running
 setup.sh for real would install packages and write to /etc.
 """
 
+import os
 import re
 import shutil
 import subprocess
 import unittest
 from pathlib import Path
 
-SETUP = Path(__file__).resolve().parent.parent / "bin" / "setup.sh"
+SETUP = Path(__file__).resolve().parent.parent / "scripts" / "setup.sh"
 
 
 class SetupScriptTestCase(unittest.TestCase):
@@ -48,6 +49,39 @@ class SetupScriptTestCase(unittest.TestCase):
     def test_plan_mentions_the_verification_step(self):
         plan = re.search(r"=== Garden of Eden setup.*?====", self.src, re.S).group(0)
         self.assertIn("Verify", plan)
+
+    def test_no_stale_bin_path_references(self):
+        """bin/ became scripts/; a stale reference silently breaks installs.
+
+        The docs and agent instructions hardcode these paths, and nothing in
+        the suite would notice one drifting, so assert it here. Genuine `bin`
+        paths -- the venv and /usr/local/bin, where setup.sh installs the
+        symlinks -- are not affected and must stay.
+        """
+        root = SETUP.parent.parent
+        skip_dirs = {"venv", ".git", "__pycache__", "timelapse", "node_modules"}
+        this_file = Path(__file__).resolve()
+        offenders = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".venv")]
+            for name in filenames:
+                path = Path(dirpath) / name
+                if path.suffix not in (".sh", ".md", ".py", ".yml", ".html"):
+                    continue
+                if path.resolve() == this_file:
+                    continue  # this file names bin/ on purpose, in prose
+                for n, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+                    scrubbed = re.sub(r"(\S*/)?venv/bin/", "", line)
+                    scrubbed = re.sub(r"/usr/local/bin/", "", scrubbed)
+                    if re.search(r"(?<![\w/])bin/", scrubbed):
+                        rel = path.relative_to(root)
+                        offenders.append(f"{rel}:{n}: {line.strip()[:70]}")
+        self.assertEqual(offenders, [], "stale bin/ reference(s):\n" + "\n".join(offenders))
+
+    def test_scripts_dir_exists_and_bin_dir_does_not(self):
+        root = SETUP.parent.parent
+        self.assertTrue((root / "scripts" / "setup.sh").exists())
+        self.assertFalse((root / "bin").exists(), "bin/ should have been renamed to scripts/")
 
 
 if __name__ == "__main__":

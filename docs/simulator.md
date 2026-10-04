@@ -8,13 +8,13 @@ sensors and actuators, so the UI shows live, changing values.
 
 ```bash
 python -m venv .venv-dev
-.venv-dev/bin/pip install -r requirements-dev.txt
+.venv-dev/scripts/pip install -r requirements-dev.txt
 ```
 
 ## Web UI + REST API
 
 ```bash
-.venv-dev/bin/python -m simulator.serve
+.venv-dev/scripts/python -m simulator.serve
 # open http://localhost:5000/
 ```
 
@@ -41,7 +41,7 @@ docker compose up broker          # bundled mosquitto on :1883
 #    or: sudo apt install mosquitto && sudo systemctl start mosquitto
 
 # 2. run the MQTT simulator
-.venv-dev/bin/python -m simulator.mqtt_sim
+.venv-dev/scripts/python -m simulator.mqtt_sim
 ```
 
 Point Home Assistant's MQTT integration at the same broker. The simulated device
@@ -67,7 +67,7 @@ mosquitto_pub -t 'gardyn/light/command' -m ON  # drive the simulated light
 The same surfaces are covered by tests (no broker/Pi needed):
 
 ```bash
-.venv-dev/bin/python -m unittest discover -t . -s tests -p 'test_*.py'
+.venv-dev/scripts/python -m unittest discover -t . -s tests -p 'test_*.py'
 ```
 
 - `test_discovery.py` — asserts every HA discovery entity is announced with valid

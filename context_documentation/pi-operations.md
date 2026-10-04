@@ -53,9 +53,9 @@ Connect to the Pi and run commands from the checkout there:
 ```bash
 ssh "${GARDEN_PI_USER}@${GARDEN_PI_HOST}"
 cd ~/garden-of-eden
-./bin/get-sensor-data.sh
-./bin/water.sh
-./bin/light.sh
+./scripts/get-sensor-data.sh
+./scripts/water.sh
+./scripts/light.sh
 ```
 
 Use the script's `--help` output or its source for command-specific options. Check `docs/INSTALL.md` and `docs/maintenance.md` before changing services or hardware configuration.
@@ -67,9 +67,9 @@ Prefer running the suite **off the Pi**, on the development workstation or with 
 From a checkout with `.venv-dev` (see `README.md`), run:
 
 ```bash
-.venv-dev/bin/python -m pytest
-.venv-dev/bin/ruff check .
-.venv-dev/bin/black --check .
+.venv-dev/scripts/python -m pytest
+.venv-dev/scripts/ruff check .
+.venv-dev/scripts/black --check .
 ```
 
 `requirements-dev.txt` deliberately lists only pure-Python packages, so a development environment created from it has no `board` and the stubs install normally. Never run the suite with the runtime `venv` on the Pi.
@@ -78,7 +78,7 @@ If a focused check must run on the Pi, prefer a module that does not touch GPIO 
 
 ```bash
 ssh "${GARDEN_PI_USER}@${GARDEN_PI_HOST}" \
-	'cd ~/garden-of-eden && .venv-dev/bin/python -m pytest tests/test_models.py'
+	'cd ~/garden-of-eden && .venv-dev/scripts/python -m pytest tests/test_models.py'
 ```
 
 Regardless of where it runs, a passing suite does not replace live acceptance checks of GPIO, I2C sensors, cameras, pigpiod, systemd, and MQTT discovery on the connected hardware.

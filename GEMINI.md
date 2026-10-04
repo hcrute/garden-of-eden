@@ -19,7 +19,7 @@ follow existing patterns.
 ## Repository conventions
 
 - This is a Python 3.9+ Raspberry Pi garden controller.
-- Application code lives in `app/`; Pi-only operational scripts live in `bin/`.
+- Application code lives in `app/`; Pi-only operational scripts live in `scripts/`.
 - Prefer existing helpers, configuration, routes, and test patterns over new abstractions.
 - Keep hardware-specific behavior testable through the existing simulator and hardware stubs where practical.
 - Pins, I2C addresses, thresholds, and paths belong in `config.py` (read from `.env`), never hardcoded in a driver.
@@ -34,9 +34,9 @@ follow existing patterns.
 Use the project development environment when available:
 
 ```bash
-.venv-dev/bin/python -m pytest
-.venv-dev/bin/ruff check .
-.venv-dev/bin/black --check .
+.venv-dev/scripts/python -m pytest
+.venv-dev/scripts/ruff check .
+.venv-dev/scripts/black --check .
 ```
 
 For a focused change, run the narrowest relevant test or check first. Always run `git diff --check` before finishing. Note: `python -m unittest` must use `-t . -s tests` so `tests/__init__.py` installs the hardware stubs before `app/` imports.

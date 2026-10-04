@@ -2,7 +2,7 @@
 
 ## 1. Flash with SSH + networking enabled (first access)
 
-You need SSH to run `bin/setup.sh` the first time, so enable it when you flash
+You need SSH to run `scripts/setup.sh` the first time, so enable it when you flash
 the card. In the **Raspberry Pi Imager**, click the ⚙ (advanced options) and set:
 
 - **Enable SSH** (password or public-key)
@@ -22,9 +22,9 @@ ssh gardyn@gardyn.local
 
 ## 2. Install — SSH stays on, mDNS is added
 
-`bin/setup.sh` keeps SSH enabled and installs `avahi-daemon` + sets the hostname,
+`scripts/setup.sh` keeps SSH enabled and installs `avahi-daemon` + sets the hostname,
 so the unit is reliably reachable at **`gardyn.local`** afterward (override with
-`GARDEN_HOSTNAME=… ./bin/setup.sh`). It also installs **`garden-api.service`**,
+`GARDEN_HOSTNAME=… ./scripts/setup.sh`). It also installs **`garden-api.service`**,
 which serves the web UI/REST API on boot.
 
 ```bash
@@ -32,8 +32,8 @@ git clone https://github.com/iot-root/garden-of-eden.git
 cd garden-of-eden
 cp .env-dist .env && nano .env
 
-./bin/setup.sh --dry-run   # preview every system change; makes NO changes
-./bin/setup.sh             # prompts for confirmation before applying
+./scripts/setup.sh --dry-run   # preview every system change; makes NO changes
+./scripts/setup.sh             # prompts for confirmation before applying
 ```
 
 ### Safety
@@ -46,7 +46,7 @@ cp .env-dist .env && nano .env
   **backed up** to `<file>.garden.bak` first.
 - It detects the correct boot config path (`/boot/firmware/config.txt` on
   Bookworm, `/boot/config.txt` on older releases).
-- **`bin/uninstall.sh`** reverses the install: stops/removes the services,
+- **`scripts/uninstall.sh`** reverses the install: stops/removes the services,
   removes symlinks/udev rules and our cron entries, and restores the backups.
   (It leaves apt packages, group membership, and SSH enabled — harmless.)
 

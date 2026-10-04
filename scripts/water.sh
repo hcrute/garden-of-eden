@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/scripts/env bash
 
 # Script to control Gardyn water pump
 # Usage: water <seconds|on|off>

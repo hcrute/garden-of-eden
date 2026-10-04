@@ -4,12 +4,12 @@ This list records confirmed limitations found during repository review. Keep it 
 
 ## Sensor logging script
 
-`bin/get-sensor-data.sh` is a legacy text-logging wrapper rather than a structured telemetry pipeline. It currently:
+`scripts/get-sensor-data.sh` is a legacy text-logging wrapper rather than a structured telemetry pipeline. It currently:
 
 - assumes the runtime environment is at `venv/bin/python`;
 - creates `/var/log/gardyn-data.log` with `sudo touch` but appends without `sudo`, which can fail for an unprivileged cron user;
 - does not stop on sensor command failures, so failed reads can become empty log entries;
-- is shown as a manual cron entry in `README.md` rather than being installed by `bin/setup.sh`.
+- is shown as a manual cron entry in `README.md` rather than being installed by `scripts/setup.sh`.
 
 The sensor drivers should be run through a consistently configured service or wrapper before relying on this log for monitoring.
 

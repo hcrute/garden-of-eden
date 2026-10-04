@@ -15,7 +15,7 @@ Read nearby implementation and tests before editing. Keep changes focused on the
 ## Repository conventions
 
 - This is a Python 3.9+ Raspberry Pi garden controller.
-- Application code lives under `app/`; operational scripts live under `bin/` and are intended to run on the Pi.
+- Application code lives under `app/`; operational scripts live under `scripts/` and are intended to run on the Pi.
 - Prefer existing helpers, configuration, routes, and test patterns over new abstractions.
 - Keep hardware-specific behavior testable through the existing simulator and hardware stubs where practical.
 - Do not commit `.env` files, credentials, API keys, private keys, personal usernames, private IP addresses, or other machine-specific values.
@@ -28,9 +28,9 @@ Read nearby implementation and tests before editing. Keep changes focused on the
 Use the project development environment when available:
 
 ```bash
-.venv-dev/bin/python -m pytest
-.venv-dev/bin/ruff check .
-.venv-dev/bin/black --check .
+.venv-dev/scripts/python -m pytest
+.venv-dev/scripts/ruff check .
+.venv-dev/scripts/black --check .
 ```
 
 For a focused change, run the narrowest relevant test or check first. Always run `git diff --check` before finishing.

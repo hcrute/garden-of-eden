@@ -98,14 +98,14 @@ class TimelapseBuildTestCase(unittest.TestCase):
 
 
 class CaptureScriptTestCase(unittest.TestCase):
-    """bin/capture-frames.sh exists, parses, and setup.sh installs the timer."""
+    """scripts/capture-frames.sh exists, parses, and setup.sh installs the timer."""
 
     def setUp(self):
-        self.setup = (Path(__file__).resolve().parent.parent / "bin" / "setup.sh").read_text()
-        self.capture = Path(__file__).resolve().parent.parent / "bin" / "capture-frames.sh"
+        self.setup = (Path(__file__).resolve().parent.parent / "scripts" / "setup.sh").read_text()
+        self.capture = Path(__file__).resolve().parent.parent / "scripts" / "capture-frames.sh"
 
     def test_capture_script_exists_and_parses(self):
-        self.assertTrue(self.capture.exists(), "bin/capture-frames.sh is missing")
+        self.assertTrue(self.capture.exists(), "scripts/capture-frames.sh is missing")
         proc = subprocess.run(["bash", "-n", str(self.capture)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
 

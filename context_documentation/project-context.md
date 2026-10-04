@@ -11,7 +11,7 @@ Garden of Eden is a Raspberry Pi garden controller. The application exposes sens
 - `run.py`: application entry point.
 - `mqtt.py`: MQTT control and integration process.
 - `automations/`: light and pump automation definitions.
-- `bin/`: installation, service, update, and operational scripts.
+- `scripts/`: installation, service, update, and operational scripts.
 - `simulator/`: fake hardware and local service helpers.
 - `tests/`: unit and integration tests.
 - `docs/`: user, installation, maintenance, design, and integration documentation.
@@ -22,20 +22,20 @@ Create a development environment and install the declared test dependencies:
 
 ```bash
 python3 -m venv .venv-dev
-.venv-dev/bin/pip install -r requirements-dev.txt
+.venv-dev/scripts/pip install -r requirements-dev.txt
 ```
 
 Run the test suite:
 
 ```bash
-.venv-dev/bin/python -m pytest
+.venv-dev/scripts/python -m pytest
 ```
 
 Run lint and formatting checks:
 
 ```bash
-.venv-dev/bin/ruff check .
-.venv-dev/bin/black --check .
+.venv-dev/scripts/ruff check .
+.venv-dev/scripts/black --check .
 ```
 
 The project uses Python 3.9 or newer. Hardware dependencies are stubbed by the tests where possible; hardware-only behavior should be validated on the Pi or with the simulator when appropriate.

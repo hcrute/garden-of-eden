@@ -55,8 +55,8 @@ precedence over `GARDYN_MODEL` and applies without a restart.
 ## 3. Install (safe)
 
 ```bash
-./bin/setup.sh --dry-run     # preview every system change; makes NO changes
-./bin/setup.sh               # asks for confirmation before applying
+./scripts/setup.sh --dry-run     # preview every system change; makes NO changes
+./scripts/setup.sh               # asks for confirmation before applying
 ```
 
 What it does: apt deps, a Python venv, enables I2C, adds you to `i2c/gpio/dialout`
@@ -80,7 +80,7 @@ sudo i2cdetect -y 1                                             # expect 0x40,0x
 curl localhost:5000/health                                      # {"status":"ok"}
 curl localhost:5000/system                                      # model/version
 curl localhost:5000/temperature                                 # a number (503 = sensor unreachable)
-./bin/api-test.sh                                               # exercises all endpoints
+./scripts/api-test.sh                                               # exercises all endpoints
 ```
 
 Then open the web UI from any device on the network: **http://gardyn.local:5000/**
@@ -102,7 +102,7 @@ Dashboard example: `docs/homeassistant/lovelace-example.yaml`.
 - `setup.sh --dry-run` shows everything first and changes nothing.
 - Every system file edited (`config.txt`, `/etc/modules`, `/etc/hosts`) is backed
   up to `<file>.garden.bak`.
-- **Undo the install:** `./bin/uninstall.sh` (stops/removes services, restores
+- **Undo the install:** `./scripts/uninstall.sh` (stops/removes services, restores
   backups, removes our cron entries; leaves apt packages + SSH alone).
 - **Won't boot after an I2C change?** Put the SD card in any computer and copy
   `config.txt.garden.bak` over `config.txt` on the boot partition. No reflash.
@@ -112,7 +112,7 @@ Dashboard example: `docs/homeassistant/lovelace-example.yaml`.
 ## Updating later
 
 ```bash
-garden-update        # = bin/update.sh: git pull + pip install + restart services
+garden-update        # = scripts/update.sh: git pull + pip install + restart services
 ```
 
 A nightly timer (`garden-autoupdate.timer`, ~03:30) does the same pull automatically
@@ -127,7 +127,7 @@ so it never discards local changes. Disable it with
 
 ## Notes for the install
 
-- **Always run `./bin/setup.sh --dry-run` first** and read the plan before running
+- **Always run `./scripts/setup.sh --dry-run` first** and read the plan before running
   the real install. `--yes` skips the confirmation prompt.
 - The **simulator** (`python -m simulator.serve` / `mqtt_sim`) is for *off-Pi*
   testing only — do **not** run it on the Pi; the real services serve the app.
