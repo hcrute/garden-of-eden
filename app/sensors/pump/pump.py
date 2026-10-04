@@ -1,4 +1,5 @@
 import argparse
+import logging
 
 import pigpio
 from gpiozero import PWMLED
@@ -14,9 +15,26 @@ class Pump:
         # Note: for docker: PiGPIOFactory(host='pigpiod', port=8888)
         self.pin = pin
         self.pin_factory = pin_factory if pin_factory else PiGPIOFactory()
-        self.pump = PWMLED(self.pin, pin_factory=self.pin_factory)
         self.gpio = GPIOController(pin, self.pin_factory, pigpio.pi)
+        # Seed with the pin's present duty cycle. PWMLED defaults to value=0
+        # and drives the pin low on construction, so simply importing this
+        # module used to cut the pump -- which is the safe direction here, but
+        # it also silently cancelled a run in progress. See Light.__init__.
+        self.pump = PWMLED(
+            self.pin,
+            pin_factory=self.pin_factory,
+            value=self._current_value(),
+        )
         self.set_frequency(frequency)
+
+    def _current_value(self):
+        """The pin's present duty cycle as a 0.0-1.0 fraction."""
+        try:
+            duty = float(self.gpio.pi.get_PWM_dutycycle(self.pin))
+        except Exception as exc:  # noqa: BLE001 - construction must not raise
+            logging.warning("Could not read current duty cycle for pin %s: %s", self.pin, exc)
+            return 0.0
+        return max(0.0, min(1.0, duty / 255.0))
 
     def on(self):
         """

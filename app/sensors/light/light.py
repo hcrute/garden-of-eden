@@ -16,9 +16,37 @@ class Light:
         # Note: for docker: PiGPIOFactory(host='pigpiod', port=8888)
         self.pin = pin
         self.pin_factory = pin_factory if pin_factory else PiGPIOFactory()
-        self.led = PWMLED(self.pin, pin_factory=self.pin_factory)
-        self.gpio = GPIOController(pin, pin_factory, pigpio.pi)
+        self.gpio = GPIOController(pin, self.pin_factory, pigpio.pi)
+        # Seed PWMLED with whatever the pin is already doing.
+        #
+        # PWMLED defaults to value=0 and drives the pin low the moment it is
+        # constructed, so creating a Light used to switch the real light off.
+        # That was invisible from the API -- its Light is a long-lived module
+        # singleton created at import -- but every other process that imports
+        # anything under app.* (and therefore app/__init__.py, which builds the
+        # routes and their devices) paid for it. The hourly timelapse capture
+        # was the worst offender: it turned the light off once an hour, on no
+        # logged write, because the damage happens inside gpiozero.
+        self.led = PWMLED(
+            self.pin,
+            pin_factory=self.pin_factory,
+            value=self._current_value(),
+        )
         self.set_frequency(frequency)
+
+    def _current_value(self):
+        """The pin's present duty cycle as a 0.0-1.0 fraction.
+
+        pigpio reports PWM duty cycle on 0-255; PWMLED takes 0.0-1.0. Falls
+        back to 0 (light off) if the pin cannot be read, which is the safe
+        direction for a device that is merely being constructed.
+        """
+        try:
+            duty = float(self.gpio.pi.get_PWM_dutycycle(self.pin))
+        except Exception as exc:  # noqa: BLE001 - construction must not raise
+            logging.warning("Could not read current duty cycle for pin %s: %s", self.pin, exc)
+            return 0.0
+        return max(0.0, min(1.0, duty / 255.0))
 
     def on(self):
         """

@@ -55,5 +55,56 @@ class TestLight(unittest.TestCase):
         self.mock_led.close.assert_called_once()
 
 
+class LightConstructionIsNonDestructive(unittest.TestCase):
+    """Constructing a Light must not switch the real light off.
+
+    Regression: PWMLED defaults to value=0 and drives the pin low the moment it
+    is constructed, so every Light() zeroed the pin. The API hid this -- its
+    Light is a module singleton built at import -- but app/__init__.py builds
+    the routes, and therefore the devices, for *any* process that imports
+    anything under app.*. scripts/capture-frames.sh does exactly that, so the
+    hourly timelapse capture switched the light off with nothing logged and no
+    cron entry involved.
+    """
+
+    def _build(self, dutycycle):
+        with (
+            patch("app.sensors.light.light.PWMLED") as mock_led,
+            patch("app.sensors.light.light.PiGPIOFactory"),
+            patch("app.sensors.light.light.pigpio.pi") as mock_pi,
+        ):
+            mock_pi.return_value.get_PWM_dutycycle.return_value = dutycycle
+            light = Light(18)
+            return mock_led, light
+
+    def test_construction_preserves_a_lit_pin(self):
+        mock_led, _ = self._build(128)  # ~50% on a 0-255 scale
+        self.assertAlmostEqual(mock_led.call_args.kwargs["value"], 128 / 255, places=3)
+
+    def test_construction_preserves_a_full_pin(self):
+        mock_led, _ = self._build(255)
+        self.assertAlmostEqual(mock_led.call_args.kwargs["value"], 1.0, places=3)
+
+    def test_construction_preserves_an_off_pin(self):
+        mock_led, _ = self._build(0)
+        self.assertEqual(mock_led.call_args.kwargs["value"], 0.0)
+
+    def test_construction_never_exceeds_full_scale(self):
+        # A driver that returned nonsense must not wrap into a valid-looking
+        # duty cycle and overdrive the MOSFET.
+        mock_led, _ = self._build(9999)
+        self.assertLessEqual(mock_led.call_args.kwargs["value"], 1.0)
+
+    def test_unreadable_pin_falls_back_to_off_rather_than_raising(self):
+        with (
+            patch("app.sensors.light.light.PWMLED") as mock_led,
+            patch("app.sensors.light.light.PiGPIOFactory"),
+            patch("app.sensors.light.light.pigpio.pi") as mock_pi,
+        ):
+            mock_pi.return_value.get_PWM_dutycycle.side_effect = OSError("pigpiod went away")
+            Light(18)  # must not raise: construction runs at import time
+            self.assertEqual(mock_led.call_args.kwargs["value"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
