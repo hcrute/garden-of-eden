@@ -463,6 +463,76 @@ class TimelapseConfigRouteTestCase(unittest.TestCase):
                     proc.returncode, 0, f"{name}: systemd rejected {expr!r}: {proc.stderr}"
                 )
 
+    def test_pending_change_when_the_unit_has_no_oncalthar_at_all(self):
+        """A unit predating OnCalendar support says nothing about the schedule.
+
+        Reporting pending_change=False there is worse than useless: it looks
+        like .env and the unit agree when the unit is running on a completely
+        different, now-unreported cadence.
+        """
+        import builtins
+
+        real_open = builtins.open
+
+        def fake_open(path, *a, **kw):
+            if str(path).endswith("garden-timelapse.timer"):
+                return io.StringIO("[Timer]\nOnBootSec=2min\nOnUnitActiveSec=3600s\n")
+            return real_open(path, *a, **kw)
+
+        with patch("builtins.open", fake_open):
+            body = self.client.get("/camera/timelapse-config").get_json()
+        self.assertIsNone(body["installed_on_calendar"])
+        self.assertTrue(body["pending_change"])
+
+    def test_no_pending_change_when_the_unit_matches_env(self):
+        import builtins
+
+        real_open = builtins.open
+        expression = config.TIMELAPSE_SCHEDULE_PRESETS.get(
+            config.TIMELAPSE_SCHEDULE, config.TIMELAPSE_SCHEDULE
+        )
+
+        def fake_open(path, *a, **kw):
+            if str(path).endswith("garden-timelapse.timer"):
+                return io.StringIO(f"[Timer]\nOnCalendar={expression}\n")
+            return real_open(path, *a, **kw)
+
+        with patch("builtins.open", fake_open):
+            body = self.client.get("/camera/timelapse-config").get_json()
+        self.assertFalse(body["pending_change"])
+
+    def test_next_run_keeps_the_time_not_just_the_date(self):
+        """list-timers NEXT is four tokens; the first two drop the clock time."""
+        import subprocess as sp
+
+        class Result:
+            returncode = 0
+
+            def __init__(self, out):
+                self.stdout = out
+
+        def fake_run(cmd, **kw):
+            if "show" in cmd:
+                return Result("\n")  # realtime empty: a monotonic timer
+            return Result(
+                "Sun 2026-10-04 12:18:17 PDT 12min Sun 2026-10-04 11:16:52 PDT 48min ago garden-timelapse.timer garden-timelapse.service\n"
+            )
+
+        with patch.object(sp, "run", fake_run):
+            body = self.client.get("/camera/timelapse-config").get_json()
+        self.assertEqual(body["next_runs"], ["Sun 2026-10-04 12:18:17 PDT"])
+
+    def test_prefers_the_exact_systemd_timestamp_when_available(self):
+        import subprocess as sp
+
+        class Result:
+            returncode = 0
+            stdout = "Sun 2026-10-04 12:18:17 PDT\n"
+
+        with patch.object(sp, "run", lambda cmd, **kw: Result()):
+            body = self.client.get("/camera/timelapse-config").get_json()
+        self.assertEqual(body["next_runs"], ["Sun 2026-10-04 12:18:17 PDT"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,22 +111,44 @@ def timelapse_config():
     except OSError:
         pass
 
+    # NextElapseUSecRealtime is exact and already formatted, but it is only
+    # populated for wall-clock (OnCalendar) timers -- an OnUnitActiveSec timer
+    # is monotonic and leaves it empty. Fall back to list-timers, whose NEXT
+    # column is four tokens (weekday, date, time, zone); taking the first two
+    # silently drops the time and leaves "Sun 2026-10-04".
     next_runs = []
     try:
         out = subprocess.run(
-            ["systemctl", "list-timers", "garden-timelapse.timer", "--no-pager", "--no-legend"],
+            [
+                "systemctl",
+                "show",
+                "garden-timelapse.timer",
+                "-p",
+                "NextElapseUSecRealtime",
+                "--value",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
         )
-        if out.returncode == 0 and out.stdout.strip():
-            next_runs = [
-                ln.split()[0] + " " + ln.split()[1]
-                for ln in out.stdout.strip().splitlines()
-                if ln.split()
-            ]
+        stamp = out.stdout.strip() if out.returncode == 0 else ""
+        if stamp and stamp != "n/a":
+            next_runs = [stamp]
+        else:
+            out = subprocess.run(
+                ["systemctl", "list-timers", "garden-timelapse.timer", "--no-pager", "--no-legend"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                next_runs = [
+                    " ".join(line.split()[:4])
+                    for line in out.stdout.strip().splitlines()
+                    if line.split()
+                ]
     except Exception:  # noqa: BLE001 - status display must never 500
-        pass
+        next_runs = []
 
     frames = sum(
         len(glob.glob(os.path.join(config.TIMELAPSE_DIR, c, "*.jpg"))) for c in camera.CAMERAS
@@ -138,7 +160,9 @@ def timelapse_config():
             "is_preset": is_preset,
             "installed_on_calendar": installed,
             "next_runs": next_runs,
-            "pending_change": bool(installed and installed != expression),
+            # True whenever the unit does not say what .env says, including
+            # when it predates OnCalendar support and says nothing at all.
+            "pending_change": installed != expression,
             "presets": sorted(config.TIMELAPSE_SCHEDULE_PRESETS),
             "cameras": list(camera.CAMERAS),
             "frames_archived": frames,
