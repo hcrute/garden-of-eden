@@ -252,11 +252,15 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 # is the practical limit. Override for a text-only, cheaper model if you do not
 # want the photo, e.g. openai/gpt-oss-20b.
 GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
-# The free plan enforces an output-tokens-per-minute (OTPM) ceiling of 1000 and
-# rejects any request whose *requested* max output exceeds it, with a 429
-# before the model runs. 1024 therefore fails on a free key; 800 leaves headroom
-# and still fits a full answer. Raise it only on a paid tier.
-GROQ_MAX_TOKENS = _get_int("GROQ_MAX_TOKENS", 800)
+# Raised from 800 on 2026-10-04: an 800-token cap truncated answers mid
+# sentence on a full-plant audit. The previous comment here claimed the free
+# plan rejected any request whose requested max_tokens exceeded an OTPM ceiling
+# of 1000, and that "1024 therefore fails on a free key" -- that was no longer
+# true. Verified against this key and model: 800, 1024, 1200, 1500, 2000, 3000
+# and 4000 all returned HTTP 200. The real ceiling is tokens *per minute* (an
+# image costs 2048 input tokens against an 8K TPM budget), so this is about how
+# many requests you make, not how long one answer may be.
+GROQ_MAX_TOKENS = _get_int("GROQ_MAX_TOKENS", 2000)
 # A round trip normally takes a few seconds; fail fast rather than let a
 # request hang against Waitress's worker threads.
 GROQ_TIMEOUT = _get_int("GROQ_TIMEOUT", 30)
