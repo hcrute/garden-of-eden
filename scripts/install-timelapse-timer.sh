@@ -27,6 +27,7 @@ GOE_PATH="$(realpath "$(dirname "$(readlink -e "$0")")/..")"
 INSTALL_USER="${SUDO_USER:-$USER}"
 RUN_USER="${INSTALL_USER}"
 SCHEDULE="${TIMELAPSE_SCHEDULE:-}"
+RESOLVE_ONLY=false
 
 # Back-compat: TIMELAPSE_INTERVAL (seconds) predates OnCalendar support.
 # OnCalendar cannot express a sub-minute period, so anything under 60s is
@@ -47,8 +48,14 @@ if [ -z "$SCHEDULE" ]; then
     fi
 fi
 
+# Resolving a preset means importing config, which needs the third-party deps.
+# Prefer the runtime venv; fall back to python3 on PATH; TIMELAPSE_PYTHON
+# overrides both, which is how the tests exercise this without a venv.
+PYTHON="${TIMELAPSE_PYTHON:-$GOE_PATH/venv/bin/python}"
+[ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+
 list_presets() {
-    "$GOE_PATH/venv/bin/python" - <<'PYEOF'
+    "$PYTHON" - <<'PYEOF'
 import config
 for name, expr in sorted(config.TIMELAPSE_SCHEDULE_PRESETS.items()):
     print(f"  {name:<16} {expr}")
@@ -66,6 +73,13 @@ while [ $# -gt 0 ]; do
             list_presets
             exit 0
             ;;
+        --resolve)
+            # Print the resolved OnCalendar expression and exit, without
+            # touching anything. Exists so the resolution is testable, and so
+            # an expression can be checked before committing to an install.
+            RESOLVE_ONLY=true
+            shift
+            ;;
         -h|--help)
             sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -73,6 +87,41 @@ while [ $# -gt 0 ]; do
         *) echo "Unknown argument: $1 (try --help)" >&2; exit 2 ;;
     esac
 done
+
+# Resolve the schedule to a systemd calendar expression. A preset name maps to
+# its expression; anything else is passed through so the full systemd calendar
+# syntax stays available.
+#
+# Two separate lines, never one line read into two variables: most expressions
+# contain spaces ("*-*-* 08:00:00"), and `read -r A B` splits on the first
+# one, which silently truncates every time-based preset to "*-*-*".
+resolved=$(cd "$GOE_PATH" && "$PYTHON" - <<PYEOF
+import config
+name = ${SCHEDULE@Q}
+presets = config.TIMELAPSE_SCHEDULE_PRESETS
+print(presets.get(name, name))
+print("preset" if name in presets else "custom")
+PYEOF
+)
+ON_CALENDAR="$(printf '%s\n' "$resolved" | sed -n 1p)"
+IS_PRESET="$(printf '%s\n' "$resolved" | sed -n 2p)"
+
+# A nonsensical expression makes the timer load cleanly and never fire, so
+# refuse it here rather than report a successful install.
+if [ -z "$ON_CALENDAR" ]; then
+    echo "Refusing to run: schedule '$SCHEDULE' is empty." >&2
+    exit 1
+fi
+if ! systemd-analyze calendar "$ON_CALENDAR" >/dev/null 2>&1; then
+    echo "Refusing to run: systemd does not accept OnCalendar='$ON_CALENDAR'" >&2
+    echo "Try --list-presets, or check: systemd-analyze calendar '<expression>'" >&2
+    exit 1
+fi
+
+if [ "$RESOLVE_ONLY" = "true" ]; then
+    printf '%s\n' "$ON_CALENDAR"
+    exit 0
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "This installs system units and needs sudo." >&2
@@ -92,21 +141,6 @@ if [ ! -x "$CAPTURE" ]; then
     echo "Missing or not executable: $CAPTURE" >&2
     exit 1
 fi
-
-# Resolve the schedule to a systemd calendar expression. A preset name maps to
-# its expression; anything else is passed through so the full systemd calendar
-# syntax stays available. An empty or nonsense expression is rejected here
-# rather than producing a timer that silently never fires.
-read -r ON_CALENDAR IS_PRESET <<EOF
-$("$GOE_PATH/venv/bin/python" - <<PYEOF
-import config
-name = ${SCHEDULE@Q}
-presets = config.TIMELAPSE_SCHEDULE_PRESETS
-expr = presets.get(name, name)
-print(expr, "preset" if name in presets else "custom")
-PYEOF
-)
-EOF
 
 trap 'rm -f "$service_file" "$timer_file"' EXIT
 

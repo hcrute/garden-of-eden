@@ -2,6 +2,7 @@ import datetime
 import io
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -208,6 +209,56 @@ class TimelapseTimerInstallerTestCase(unittest.TestCase):
     def test_warns_when_systemd_rejects_the_expression(self):
         self.assertIn("TimersCalendar", self.src)
         self.assertIn("WARNING", self.src)
+
+    def _resolve(self, *args, env=None):
+        """Run the installer in its no-op --resolve mode.
+
+        This is the regression test for a real bug: resolving into two shell
+        variables off one line of output truncated every expression containing
+        a space, so "daily" installed OnCalendar=*-*-* and fired 288 times a
+        day at nothing.
+        """
+        full = dict(os.environ)
+        full["TIMELAPSE_PYTHON"] = sys.executable
+        full.update(env or {})
+        proc = subprocess.run(
+            ["bash", str(self.installer), *args, "--resolve"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=full,
+            timeout=60,
+        )
+        return proc
+
+    def test_resolve_preserves_the_full_expression_including_spaces(self):
+        for name, expr in config.TIMELAPSE_SCHEDULE_PRESETS.items():
+            with self.subTest(preset=name):
+                proc = self._resolve("--schedule", name)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stdout.strip(), expr)
+
+    def test_resolve_passes_a_custom_expression_through_untouched(self):
+        proc = self._resolve("--schedule", "Mon..Fri *-*-* 07:30:00")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "Mon..Fri *-*-* 07:30:00")
+
+    def test_resolve_rejects_an_expression_systemd_would_not_accept(self):
+        # Otherwise this installs a timer that loads cleanly and never fires.
+        proc = self._resolve("--schedule", "not a calendar")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Refusing", proc.stderr)
+
+    def test_legacy_interval_is_converted_with_a_warning(self):
+        proc = self._resolve(env={"TIMELAPSE_INTERVAL": "1800"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "*:0/30")
+        self.assertIn("deprecated", proc.stderr)
+
+    def test_sub_minute_interval_is_rejected_not_rounded(self):
+        proc = self._resolve(env={"TIMELAPSE_INTERVAL": "30"})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("under a minute", proc.stderr)
 
 
 class TimelapseFrameExportTestCase(unittest.TestCase):
