@@ -487,6 +487,44 @@ drive real hardware:
 To remove the schedule, clear it in the web UI rather than deleting lines from
 `crontab -e`, so the saved state and the crontab stay in agreement.
 
+### Timelapse
+
+The **Timelapse** card on the web UI plays a video assembled from archived
+camera frames. Frames are captured by a systemd timer and stored under
+`timelapse/`, pruned to `TIMELAPSE_MAX_FRAMES` (720 by default). Pressing
+**Build** runs ffmpeg over whatever frames exist.
+
+This needs two things, both installed by `scripts/setup.sh`:
+
+```bash
+sudo apt install -y ffmpeg      # to build the video
+```
+
+**Capture timer.** Install it with:
+
+```bash
+sudo scripts/install-timelapse-timer.sh
+```
+
+That generates `garden-timelapse.service` and `garden-timelapse.timer` into
+`/etc/systemd/system` and enables the timer, capturing one frame per camera
+hourly (first frame two minutes after boot). Change the interval with
+`TIMELAPSE_INTERVAL=900 sudo -E scripts/install-timelapse-timer.sh`.
+
+The unit files are generated rather than committed because they embed
+`User=` and `WorkingDirectory=`, which are machine-specific.
+
+> **Frames only appear if the timer is installed and running.** Without it the
+> archive stays empty and Build reports *"no frames archived yet"* -- the
+> timelapse feature has no other source of frames. Check with
+> `systemctl status garden-timelapse.timer`.
+
+To capture one frame immediately without waiting for the timer:
+
+```bash
+scripts/capture-frames.sh
+```
+
 ## Hardware Overview
 
 Depending on the system you have, here is a breakdown of the hardware.

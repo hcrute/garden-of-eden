@@ -118,11 +118,60 @@ class CaptureScriptTestCase(unittest.TestCase):
         self.assertIn("camera.CAMERAS", src)
 
     def test_setup_installs_the_timer(self):
+        # setup.sh delegates to the installer rather than inlining the units,
+        # so it only needs to reference the timer by name and the script.
         self.assertIn("setup_timelapse_timer", self.setup)
         self.assertIn("garden-timelapse.timer", self.setup)
-        self.assertIn("garden-timelapse.service", self.setup)
+        self.assertIn("install-timelapse-timer.sh", self.setup)
         # ...and verification must know about it, or a missing timer is invisible.
         self.assertIn("garden-timelapse.timer", self.setup.split("verify_install")[0])
+
+
+class TimelapseTimerInstallerTestCase(unittest.TestCase):
+    """scripts/install-timelapse-timer.sh is the documented way to add the timer.
+
+    The units embed User= and WorkingDirectory=, so they are generated rather
+    than committed. setup.sh delegates here so the unit definitions have one
+    source of truth.
+    """
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.installer = root / "scripts" / "install-timelapse-timer.sh"
+        self.setup = (root / "scripts" / "setup.sh").read_text()
+        self.src = self.installer.read_text() if self.installer.exists() else ""
+
+    def test_installer_exists_and_parses(self):
+        self.assertTrue(self.installer.exists(), "install-timelapse-timer.sh is missing")
+        proc = subprocess.run(["bash", "-n", str(self.installer)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_installer_generates_both_units(self):
+        self.assertIn("garden-timelapse.service", self.src)
+        self.assertIn("garden-timelapse.timer", self.src)
+        self.assertIn("systemctl enable --now garden-timelapse.timer", self.src)
+
+    def test_installer_is_referenced_by_the_docs(self):
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        self.assertIn("scripts/install-timelapse-timer.sh", readme)
+
+    def test_setup_delegates_to_the_installer(self):
+        # One definition of the units, not two that can drift.
+        self.assertIn("install-timelapse-timer.sh", self.setup)
+        # setup.sh must no longer inline the unit bodies.
+        body = self.setup.split("setup_timelapse_timer {")[1].split("\n}")[0]
+        self.assertNotIn("[Timer]", body, "setup.sh should delegate, not redefine the unit")
+
+    def test_units_are_not_committed(self):
+        # Machine-specific User=/WorkingDirectory= must not live in the repo.
+        for stray in (
+            "services/etc/systemd/system/garden-timelapse.service",
+            "services/etc/systemd/system/garden-timelapse.timer",
+        ):
+            self.assertFalse(
+                (Path(__file__).resolve().parent.parent / stray).exists(),
+                f"{stray} should be generated, not committed",
+            )
 
 
 if __name__ == "__main__":
