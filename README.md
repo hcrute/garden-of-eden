@@ -563,37 +563,117 @@ camera frames. Frames are captured by a systemd timer and stored under
 
 This needs two things, both installed by `scripts/setup.sh`:
 
-```
-bash
+```bash
 sudo apt install -y ffmpeg      # to build the video
 ```
 
-**Capture timer.** Install it with:
-
-```
-bash
-sudo scripts/install-timelapse-timer.sh
-```
-
-That generates `garden-timelapse.service` and `garden-timelapse.timer` into
-`/etc/systemd/system` and enables the timer, capturing one frame per camera
-hourly (first frame two minutes after boot). Change the interval with
-`TIMELAPSE_INTERVAL=900 sudo -E scripts/install-timelapse-timer.sh`.
-
-The unit files are generated rather than committed because they embed
-`User=` and `WorkingDirectory=`, which are machine-specific.
-
 > **Frames only appear if the timer is installed and running.** Without it the
 > archive stays empty and Build reports *"no frames archived yet"* -- the
-> timelapse feature has no other source of frames. Check with
-> `systemctl status garden-timelapse.timer`.
+> timelapse feature has no other source of frames.
 
-To capture one frame immediately without waiting for the timer:
+#### Capture schedule
+
+```bash
+sudo scripts/install-timelapse-timer.sh                    # hourly
+sudo scripts/install-timelapse-timer.sh --schedule daily   # once a day, 08:00
+sudo scripts/install-timelapse-timer.sh --schedule every-30-min
+sudo scripts/install-timelapse-timer.sh --list-presets
+```
+
+The timer uses systemd's `OnCalendar`, so the presets are conveniences and the
+full calendar syntax is available:
+
+| Preset | OnCalendar | Meaning |
+| --- | --- | --- |
+| `hourly` | `hourly` | every hour |
+| `every-30-min` | `*:0/30` | twice an hour |
+| `every-15-min` | `*:0/15` | four times an hour |
+| `every-5-min` | `*:0/5` | twelve times an hour |
+| `daily` | `*-*-* 08:00:00` | once a day at 8am |
+| `daily-early` | `*-*-* 06:00:00` | once a day at 6am |
+| `twice-daily` | `*-*-* 06,18:00:00` | morning and evening |
+| `every-6-hours` | `*-*-* 00/6:00:00` | four times a day |
+
+Anything that is not a preset name is passed straight to `OnCalendar`, so
+`--schedule 'Mon..Fri *-*-* 07:30:00'` works. Check an expression without
+installing anything:
 
 ```
-bash
+scripts/install-timelapse-timer.sh --schedule daily --resolve
+```
+
+`daily` is deliberately 8am rather than midnight -- the lights are off then.
+
+The unit files are generated rather than committed because they embed
+`User=` and `WorkingDirectory=`, which are machine-specific. The timer sets
+`Persistent=true`, so a daily capture whose Pi was off at 8am runs at next
+boot instead of being skipped.
+
+To capture one frame immediately, without waiting for the timer:
+
+```bash
 scripts/capture-frames.sh
 ```
+
+#### Knobs
+
+All of these go in `.env`; the timer ones are read when you re-run the
+installer.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `TIMELAPSE_SCHEDULE` | `hourly` | preset name or `OnCalendar` expression |
+| `TIMELAPSE_MAX_FRAMES` | `720` | frames retained before the oldest are pruned |
+| `TIMELAPSE_FPS` | `12` | playback frame rate of the built video |
+| `TIMELAPSE_DIR` | `<repo>/timelapse` | where frames and mp4s live |
+| `TIMELAPSE_AUTO_BUILD` | `false` | rebuild the mp4 after each capture |
+
+`TIMELAPSE_MAX_FRAMES` interacts with the schedule: at 720 frames, hourly
+retains 30 days, but every 15 minutes only three. Raise it if you want longer.
+
+`TIMELAPSE_AUTO_BUILD` is off by default because rebuilding re-encodes every
+retained frame, which on a Pi is real CPU for a video most people watch once a
+day.
+
+#### Downloading the photos
+
+The web UI has **Download upper photos** / **Download lower photos** buttons,
+with an optional date range. They fetch:
+
+```
+GET /camera/timelapse/<cam>/frames.zip
+GET /camera/timelapse/<cam>/frames.zip?from=2026-10-01&to=2026-10-04
+```
+
+which is the whole point over a tailnet: the browser on your phone or laptop
+pulls the archive over Tailscale, with the same admin password as everything
+else. From a shell:
+
+```bash
+curl -H "X-API-Key: $GARDEN_ADMIN_PASSWORD" \
+  "http://gardengoblin:5000/camera/timelapse/upper/frames.zip?from=2026-10-01" \
+  -o frames.zip
+```
+
+`from` and `to` are `YYYY-MM-DD` and both ends are inclusive. Omitting them
+sends everything, which is bounded by `TIMELAPSE_MAX_FRAMES`. A range with no
+frames returns 404 rather than an empty zip, since a zero-byte download looks
+like a silent failure.
+
+#### What the machine is actually doing
+
+`GET /camera/timelapse-config` reports the configured schedule, the next fire
+times, the frame count and whether the installed unit matches `.env`:
+
+```bash
+curl -H "X-API-Key: $GARDEN_ADMIN_PASSWORD" \
+  http://localhost:5000/camera/timelapse-config
+```
+
+It compares `.env` against the generated unit and sets `pending_change` when
+they disagree, so editing `.env` and forgetting to re-run the installer shows
+up as "installer re-run needed to apply" in the web UI rather than silently
+displaying a schedule that is not in effect.
 
 ## Hardware Overview
 
