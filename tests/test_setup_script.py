@@ -57,6 +57,11 @@ class SetupScriptTestCase(unittest.TestCase):
         the suite would notice one drifting, so assert it here. Genuine `bin`
         paths -- the venv and /usr/local/bin, where setup.sh installs the
         symlinks -- are not affected and must stay.
+
+        Matches both `bin/` and a bare `"bin"` path component. The rename was a
+        `bin/` pattern and it silently missed os.path.join(..., "bin", ...),
+        which is how REFRESH_CMD kept pointing at a directory that no longer
+        existed and the schedule quietly stopped working.
         """
         root = SETUP.parent.parent
         skip_dirs = {"venv", ".git", "__pycache__", "timelapse", "node_modules"}
@@ -73,7 +78,10 @@ class SetupScriptTestCase(unittest.TestCase):
                 for n, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
                     scrubbed = re.sub(r"(\S*/)?venv/bin/", "", line)
                     scrubbed = re.sub(r"/usr/local/bin/", "", scrubbed)
-                    if re.search(r"(?<![\w/])bin/", scrubbed):
+                    stale = re.search(r"(?<![\w/])bin/", scrubbed) or re.search(
+                        r"""["']bin["']""", scrubbed
+                    )
+                    if stale:
                         rel = path.relative_to(root)
                         offenders.append(f"{rel}:{n}: {line.strip()[:70]}")
         self.assertEqual(offenders, [], "stale bin/ reference(s):\n" + "\n".join(offenders))

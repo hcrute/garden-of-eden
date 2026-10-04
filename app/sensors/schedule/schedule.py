@@ -39,7 +39,7 @@ WATER_CMD = "/usr/local/bin/water"
 
 # schedule-refresh CLI (absolute path): run nightly so vacation mode auto-expires.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-REFRESH_CMD = os.path.join(_REPO_ROOT, "bin", "schedule-refresh.sh")
+REFRESH_CMD = os.path.join(_REPO_ROOT, "scripts", "schedule-refresh.sh")
 
 # Reduced light/water applied to every day while Vacation mode is active.
 VACATION_PROFILE = {
