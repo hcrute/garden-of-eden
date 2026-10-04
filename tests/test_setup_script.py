@@ -100,6 +100,11 @@ class SetupScriptTestCase(unittest.TestCase):
         /usr/scripts/systemctl. Every script then failed with "cannot execute:
         required file not found" -- and nothing caught it, because `bash -n`
         and running a script via `bash script.sh` both bypass the shebang.
+
+        The root-level form matters most: the rename also produced
+        `ExecStartPre=/scripts/bash -c ...` inside a generated systemd unit,
+        which parses fine, installs fine, and only fails at boot. The unit is
+        written from a heredoc, so no test ever executed it.
         """
         root = SETUP.parent.parent
         offenders = []
@@ -107,6 +112,15 @@ class SetupScriptTestCase(unittest.TestCase):
             re.compile(r"#!\S*scripts/"),
             re.compile(r"/usr/scripts/"),
             re.compile(r"/usr/local/scripts/"),
+            # A system binary invoked from a root-level /scripts/ : that
+            # directory does not exist, because this repo lives at
+            # /home/<user>/garden-of-eden. Matched by binary name so that
+            # "${INSTALL_DIR}/scripts/light.sh" is not a false positive.
+            re.compile(
+                r"(?<![\w$}/])/scripts/"
+                r"(?:bash|sh|dash|env|python3?|systemctl|ls|cat|sleep"
+                r"|true|false|head|tail|mktemp|install|rm|mv|cp)\b"
+            ),
         )
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [
@@ -127,6 +141,50 @@ class SetupScriptTestCase(unittest.TestCase):
         self.assertEqual(
             offenders, [], "system path wrongly containing scripts/:\n" + "\n".join(offenders)
         )
+
+    def test_system_path_patterns_actually_match_the_broken_forms(self):
+        """A guard that cannot fail guards nothing.
+
+        Every pattern above is checked against the exact string it exists to
+        catch. Without this, an over-broad or broken regex silently passes on
+        the whole tree and reports green forever.
+        """
+        broken = {
+            r"#!/scripts/bash": re.compile(r"#!\S*scripts/"),
+            r"/usr/scripts/systemctl": re.compile(r"/usr/scripts/"),
+            r"/usr/local/scripts/env": re.compile(r"/usr/local/scripts/"),
+            r"ExecStartPre=/scripts/bash -c": re.compile(
+                r"(?<![\w$}/])/scripts/"
+                r"(?:bash|sh|dash|env|python3?|systemctl|ls|cat|sleep"
+                r"|true|false|head|tail|mktemp|install|rm|mv|cp)\b"
+            ),
+        }
+        for sample, pattern in broken.items():
+            with self.subTest(sample=sample):
+                self.assertTrue(pattern.search(sample), f"pattern no longer matches {sample}")
+
+        # ...and does not fire on the real repo paths.
+        good = [
+            "${INSTALL_DIR}/scripts/light.sh",
+            "${GOE_PATH}/scripts/capture-frames.sh",
+            "/home/hcrute/garden-of-eden/scripts/setup.sh",
+            "#!/usr/bin/env bash",
+            "ExecStartPre=/bin/bash -c",
+        ]
+        patterns = [
+            re.compile(r"#!\S*scripts/"),
+            re.compile(r"/usr/scripts/"),
+            re.compile(r"/usr/local/scripts/"),
+            re.compile(
+                r"(?<![\w$}/])/scripts/"
+                r"(?:bash|sh|dash|env|python3?|systemctl|ls|cat|sleep"
+                r"|true|false|head|tail|mktemp|install|rm|mv|cp)\b"
+            ),
+        ]
+        for sample in good:
+            for pattern in patterns:
+                with self.subTest(sample=sample, pattern=pattern.pattern[:28]):
+                    self.assertIsNone(pattern.search(sample), f"false positive on {sample}")
 
     def test_every_script_shebang_points_at_a_real_interpreter(self):
         """A bad shebang cannot be run directly, which is exactly how cron
@@ -198,6 +256,66 @@ class SetupScriptTestCase(unittest.TestCase):
             if p.name != "guards.py" and "app.lib.lib" in p.read_text(errors="ignore")
         ]
         self.assertEqual(offenders, [], f"stale app.lib.lib import(s): {offenders}")
+
+
+class MqttServiceInstallerTestCase(unittest.TestCase):
+    """scripts/install-mqtt-service.sh is how mqtt.service gets installed.
+
+    The unit embeds User= and WorkingDirectory=, so it is generated rather than
+    committed, and setup.sh delegates here so there is one source of truth.
+    """
+
+    def setUp(self):
+        root = Path(__file__).resolve().parent.parent
+        self.installer = root / "scripts" / "install-mqtt-service.sh"
+        self.setup = (root / "scripts" / "setup.sh").read_text()
+        self.src = self.installer.read_text() if self.installer.exists() else ""
+
+    def test_installer_exists_and_parses(self):
+        self.assertTrue(self.installer.exists(), "install-mqtt-service.sh is missing")
+        proc = subprocess.run(["bash", "-n", str(self.installer)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_installer_generates_the_service(self):
+        self.assertIn("/etc/systemd/system/mqtt.service", self.src)
+        self.assertIn("systemctl enable mqtt.service", self.src)
+        self.assertIn("[Service]", self.src)
+        self.assertIn("Restart=always", self.src)
+        # mqtt.py must be what runs, not the web app.
+        self.assertIn("mqtt.py", self.src)
+
+    def test_requires_root(self):
+        # Without this guard the script writes to /etc and fails halfway,
+        # leaving a half-installed unit behind.
+        self.assertIn("id -u", self.src)
+        self.assertIn("needs sudo", self.src)
+
+    def test_validates_prerequisites_before_writing_anything(self):
+        # mqtt.py and the runtime venv are checked up front so a bad install
+        # fails before touching /etc, not after.
+        self.assertIn("venv/bin/python", self.src)
+        self.assertIn("mqtt.py", self.src)
+        body = self.src.split("cat >")[0]
+        self.assertIn("PYTHON=", body)
+
+    def test_setup_delegates_to_the_installer(self):
+        # One definition of the unit, not two that can drift apart.
+        self.assertIn("install-mqtt-service.sh", self.setup)
+        body = self.setup.split("setup_mqtt_service {")[1].split("\n}")[0]
+        self.assertNotIn("[Service]", body, "setup.sh should delegate, not redefine the unit")
+
+    def test_execstartpre_uses_a_real_system_shell(self):
+        """Regression: the bin/ -> scripts/ rename produced /scripts/bash.
+
+        It parsed, installed and only failed at boot, because the unit is built
+        from a heredoc that no test executed.
+        """
+        self.assertNotIn("/scripts/bash", self.src)
+        self.assertIn("ExecStartPre=/bin/bash", self.src)
+
+    def test_installer_is_referenced_by_the_docs(self):
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        self.assertIn("scripts/install-mqtt-service.sh", readme)
 
 
 if __name__ == "__main__":

@@ -241,6 +241,27 @@ password_file /etc/mosquitto/passwd
 listener 1883
 ```
 
+A broker on its own does nothing — `mqtt.service` is what publishes Home
+Assistant discovery, the camera image entity, and the periodic frame capture.
+Install it with:
+
+```
+sudo scripts/install-mqtt-service.sh
+```
+
+The unit embeds your username and checkout path, so it is generated at install
+time rather than committed, and `scripts/setup.sh` calls the same installer.
+Afterwards:
+
+```
+systemctl status mqtt.service
+journalctl -u mqtt.service -f
+```
+
+`mqtt.py` retries when no broker is reachable, so it is safe to install the
+service before the broker. To use a broker on your Home Assistant host instead,
+set `BROKER` in `.env` to its address.
+
 
 Here are some additional options that you could set in `/etc/mosquitto/mosquitto.conf`:
 

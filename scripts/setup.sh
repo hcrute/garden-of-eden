@@ -358,41 +358,16 @@ function enable_pigpiod_service {
 
 # Setup and start MQTT service
 function setup_mqtt_service {
-    # Generate into a temp file, never into the repo. Writing the unit into
-    # services/ overwrote a tracked copy on every install, which left the
-    # checkout dirty and -- worse -- left a stale copy behind for anyone who
-    # copied it by hand instead of re-running setup.
-    local service_file
-    service_file=$(mktemp)
-
-    cat > "$service_file" <<EOF
-[Unit]
-Description=MQTT Service
-Requires=pigpiod.service
-After=network-online.target pigpiod.service
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-User=$USER
-WorkingDirectory=$INSTALL_DIR
-# Wait (up to 60s) for pigpiod to accept connections before starting, so the
-# service doesn't crash-restart during the boot race.
-ExecStartPre=/scripts/bash -c 'for i in \$(seq 1 60); do (echo > /dev/tcp/127.0.0.1/8888) >/dev/null 2>&1 && exit 0; sleep 1; done; exit 0'
-ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/mqtt.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    sudo cp "$service_file" /etc/systemd/system/mqtt.service
-    rm -f "$service_file"
-    sudo systemctl daemon-reload
-    sudo systemctl enable mqtt.service
-    sudo systemctl start mqtt.service
-    log_info "MQTT service has been started and enabled on boot."
+    # The unit lives in scripts/install-mqtt-service.sh so it can also be
+    # installed standalone, and so the definition has one source of truth.
+    # (It previously invoked a shell at a path that does not exist: when the old
+    # bin directory was renamed to scripts, the system shell path inside
+    # ExecStartPre was rewritten too, so the unit could never have started.)
+    if sudo "$INSTALL_DIR/scripts/install-mqtt-service.sh"; then
+        log_info "MQTT service has been installed and enabled on boot."
+    else
+        log_error "Could not install mqtt.service; see scripts/install-mqtt-service.sh"
+    fi
 }
 
 # Setup and start the REST API + web UI service (served by waitress on :5000).
@@ -493,7 +468,7 @@ EOF
 function setup_timelapse_timer {
     chmod +x "$INSTALL_DIR/scripts/capture-frames.sh"
     if TIMELAPSE_INTERVAL="${TIMELAPSE_INTERVAL:-3600}" \
-        "$INSTALL_DIR/scripts/install-timelapse-timer.sh"; then
+        sudo -E "$INSTALL_DIR/scripts/install-timelapse-timer.sh"; then
         log_info "Timelapse capture enabled (garden-timelapse.timer, every ${TIMELAPSE_INTERVAL:-3600}s)."
     else
         log_error "Could not install the timelapse timer; see scripts/install-timelapse-timer.sh"
