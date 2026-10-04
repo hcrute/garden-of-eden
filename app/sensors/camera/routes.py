@@ -1,7 +1,11 @@
+import datetime
+import glob
 import logging
 import os
+import re
+import subprocess
 
-from flask import Blueprint, jsonify, send_file
+from flask import Blueprint, jsonify, request, send_file
 
 import config
 from app.lib.hardware import lower_camera_enabled
@@ -44,6 +48,105 @@ def get_timelapse(cam):
     if not os.path.exists(path):
         return jsonify(error="no timelapse yet — generate one"), 404
     return send_file(path, mimetype="video/mp4")
+
+
+@camera_blueprint.route("/timelapse/<cam>/frames.zip", methods=["GET"])
+def download_frames(cam):
+    """Zip the archived frames, optionally limited to a date range.
+
+    Query params ``from`` and ``to`` are YYYY-MM-DD and both ends are
+    inclusive. Omitting both sends every retained frame, which is fine: the
+    archive is capped at TIMELAPSE_MAX_FRAMES, so it cannot grow without
+    bound.
+    """
+    if cam not in camera.CAMERAS:
+        return jsonify(error="unknown camera"), 400
+
+    def _parse(name):
+        raw = request.args.get(name)
+        if not raw:
+            return None
+        try:
+            return datetime.datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            return raw  # signal bad input to the caller
+
+    start, end = _parse("from"), _parse("to")
+    for value, name in ((start, "from"), (end, "to")):
+        if isinstance(value, str):
+            return jsonify(error=f"'{name}' must be YYYY-MM-DD"), 400
+    if start and end and start > end:
+        return jsonify(error="'from' is after 'to'"), 400
+
+    buf, count = camera.zip_frames(cam, start, end)
+    if not count:
+        return jsonify(error="no frames in that range"), 404
+    stamp = datetime.date.today().isoformat()
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"gardyn-{cam}-frames-{stamp}.zip",
+    )
+
+
+@camera_blueprint.route("/timelapse-config", methods=["GET"])
+def timelapse_config():
+    """What the capture timer is configured to do, without needing sudo.
+
+    Reads the generated unit rather than .env, because .env is the input and
+    the unit is what systemd actually runs: showing the source of truth is the
+    only way this can be trusted after someone edits one and forgets the other.
+    """
+    schedule = config.TIMELAPSE_SCHEDULE
+    expression = config.TIMELAPSE_SCHEDULE_PRESETS.get(schedule, schedule)
+    is_preset = schedule in config.TIMELAPSE_SCHEDULE_PRESETS
+
+    installed = None
+    try:
+        with open("/etc/systemd/system/garden-timelapse.timer", encoding="utf-8") as fh:
+            found = re.search(r"^OnCalendar=(.+)$", fh.read(), re.M)
+            if found:
+                installed = found.group(1).strip()
+    except OSError:
+        pass
+
+    next_runs = []
+    try:
+        out = subprocess.run(
+            ["systemctl", "list-timers", "garden-timelapse.timer", "--no-pager", "--no-legend"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            next_runs = [
+                ln.split()[0] + " " + ln.split()[1]
+                for ln in out.stdout.strip().splitlines()
+                if ln.split()
+            ]
+    except Exception:  # noqa: BLE001 - status display must never 500
+        pass
+
+    frames = sum(
+        len(glob.glob(os.path.join(config.TIMELAPSE_DIR, c, "*.jpg"))) for c in camera.CAMERAS
+    )
+    return jsonify(
+        {
+            "schedule": schedule,
+            "on_calendar": expression,
+            "is_preset": is_preset,
+            "installed_on_calendar": installed,
+            "next_runs": next_runs,
+            "pending_change": bool(installed and installed != expression),
+            "presets": sorted(config.TIMELAPSE_SCHEDULE_PRESETS),
+            "cameras": list(camera.CAMERAS),
+            "frames_archived": frames,
+            "max_frames": config.TIMELAPSE_MAX_FRAMES,
+            "fps": config.TIMELAPSE_FPS,
+            "auto_build": config.TIMELAPSE_AUTO_BUILD,
+        }
+    )
 
 
 @camera_blueprint.route("/timelapse/<cam>", methods=["POST"])

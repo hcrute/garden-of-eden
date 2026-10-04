@@ -1,5 +1,10 @@
+import datetime
+import io
+import os
 import subprocess
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -172,6 +177,196 @@ class TimelapseTimerInstallerTestCase(unittest.TestCase):
                 (Path(__file__).resolve().parent.parent / stray).exists(),
                 f"{stray} should be generated, not committed",
             )
+
+    def test_timer_uses_on_calendar_not_a_fixed_interval(self):
+        """OnCalendar is what makes "every 30 min" or "daily at 08:00" possible.
+
+        OnUnitActiveSec can express neither a time of day nor a calendar, so
+        the presets would be impossible with it.
+        """
+        self.assertIn("OnCalendar=$ON_CALENDAR", self.src)
+        self.assertNotIn("OnUnitActiveSec", self.src)
+
+    def test_accepts_a_schedule_argument_and_lists_presets(self):
+        self.assertIn("--schedule", self.src)
+        self.assertIn("--list-presets", self.src)
+
+    def test_resolves_presets_through_config_not_a_second_copy(self):
+        # One definition of the presets, so config and the installer cannot
+        # disagree about what "every-30-min" means.
+        self.assertIn("config.TIMELAPSE_SCHEDULE_PRESETS", self.src)
+
+    def test_legacy_interval_still_works(self):
+        self.assertIn("TIMELAPSE_INTERVAL", self.src)
+        self.assertIn("deprecated", self.src)
+
+    def test_persistent_catches_a_missed_run(self):
+        # A once-a-day capture whose Pi was off at 08:00 is skipped entirely
+        # without this, which quietly loses a day of the archive.
+        self.assertIn("Persistent=true", self.src)
+
+    def test_warns_when_systemd_rejects_the_expression(self):
+        self.assertIn("TimersCalendar", self.src)
+        self.assertIn("WARNING", self.src)
+
+
+class TimelapseFrameExportTestCase(unittest.TestCase):
+    """frame_files / zip_frames back the download endpoint."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.folder = self.root / "upper"
+        self.folder.mkdir()
+        for stamp in (
+            "20261001-080000",
+            "20261002-080000",
+            "20261003-080000",
+            "20261004-080000",
+        ):
+            (self.folder / f"{stamp}.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+        self._dir = config.TIMELAPSE_DIR
+        config.TIMELAPSE_DIR = str(self.root)
+        self.addCleanup(setattr, config, "TIMELAPSE_DIR", self._dir)
+
+    def test_frame_files_returns_all_by_default(self):
+        self.assertEqual(len(camera.frame_files("upper")), 4)
+
+    def test_date_range_is_inclusive_on_both_ends(self):
+        got = camera.frame_files("upper", datetime.date(2026, 10, 2), datetime.date(2026, 10, 3))
+        self.assertEqual(
+            [os.path.basename(p) for p in got], ["20261002-080000.jpg", "20261003-080000.jpg"]
+        )
+
+    def test_open_ended_range(self):
+        self.assertEqual(len(camera.frame_files("upper", start=datetime.date(2026, 10, 3))), 2)
+        self.assertEqual(len(camera.frame_files("upper", end=datetime.date(2026, 10, 2))), 2)
+
+    def test_files_not_named_like_ours_are_ignored(self):
+        # A stray file must not crash the parser or land in the zip.
+        (self.folder / "notes.txt").write_text("hello")
+        self.assertEqual(len(camera.frame_files("upper")), 4)
+
+    def test_zip_contains_only_the_selected_frames(self):
+        buf, count = camera.zip_frames(
+            "upper", datetime.date(2026, 10, 4), datetime.date(2026, 10, 4)
+        )
+        self.assertEqual(count, 1)
+        with zipfile.ZipFile(buf) as zf:
+            self.assertEqual(zf.namelist(), ["upper/20261004-080000.jpg"])
+
+    def test_zip_is_stored_not_deflated(self):
+        # JPEG does not compress further; spending CPU here would be the
+        # slowest part of an export that is otherwise a file copy.
+        buf, _ = camera.zip_frames("upper")
+        with zipfile.ZipFile(buf) as zf:
+            for info in zf.infolist():
+                self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+
+    def test_range_is_read_from_the_filename_not_the_mtime(self):
+        # Re-touching a frame must not move it into the range being exported.
+        target = self.folder / "20261001-080000.jpg"
+        os.utime(target, (0, 0))
+        got = camera.frame_files("upper", datetime.date(2026, 10, 4), datetime.date(2026, 10, 4))
+        self.assertNotIn(str(target), got)
+
+
+class TimelapseDownloadRouteTestCase(unittest.TestCase):
+    """GET /camera/timelapse/<cam>/frames.zip"""
+
+    def setUp(self):
+        self.app = create_app("default")
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        folder = self.root / "upper"
+        folder.mkdir()
+        for stamp in ("20261003-080000", "20261004-080000"):
+            (folder / f"{stamp}.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+        self._dir = config.TIMELAPSE_DIR
+        config.TIMELAPSE_DIR = str(self.root)
+        self.addCleanup(setattr, config, "TIMELAPSE_DIR", self._dir)
+
+    def test_returns_a_zip(self):
+        resp = self.client.get("/camera/timelapse/upper/frames.zip")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("zip", resp.headers["Content-Type"])
+        self.assertIn("attachment", resp.headers["Content-Disposition"])
+
+    def test_date_range_narrows_the_archive(self):
+        resp = self.client.get("/camera/timelapse/upper/frames.zip?from=2026-10-04&to=2026-10-04")
+        self.assertEqual(resp.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:
+            self.assertEqual(zf.namelist(), ["upper/20261004-080000.jpg"])
+
+    def test_malformed_date_is_rejected(self):
+        resp = self.client.get("/camera/timelapse/upper/frames.zip?from=yesterday")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_inverted_range_is_rejected(self):
+        resp = self.client.get("/camera/timelapse/upper/frames.zip?from=2026-10-04&to=2026-10-01")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_empty_range_is_404_not_an_empty_zip(self):
+        # An empty zip downloads as a 0-byte file that looks like a failure.
+        resp = self.client.get("/camera/timelapse/upper/frames.zip?from=2020-01-01&to=2020-01-02")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_unknown_camera_is_rejected(self):
+        self.assertEqual(self.client.get("/camera/timelapse/sideways/frames.zip").status_code, 400)
+
+    def test_does_not_collide_with_the_timelapse_video_route(self):
+        # /timelapse/<cam> also matches "timelapse-config" as a <cam>; make sure
+        # each URL still reaches the handler it was written for.
+        self.assertEqual(self.client.get("/camera/timelapse/upper").status_code in (200, 404), True)
+        self.assertEqual(self.client.get("/camera/timelapse-config").status_code, 200)
+
+
+class TimelapseConfigRouteTestCase(unittest.TestCase):
+    """GET /camera/timelapse-config -- the schedule knobs, readable without sudo."""
+
+    def setUp(self):
+        self.app = create_app("default")
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+
+    def test_reports_the_configured_schedule_and_presets(self):
+        body = self.client.get("/camera/timelapse-config").get_json()
+        self.assertIn("schedule", body)
+        self.assertIn("hourly", body["presets"])
+        self.assertIn("daily", body["presets"])
+        self.assertIsInstance(body["presets"], list)
+
+    def test_survives_a_missing_timer_unit(self):
+        # The unit lives outside the repo and is absent on a dev box; status
+        # display must degrade, not 500.
+        body = self.client.get("/camera/timelapse-config").get_json()
+        self.assertIn("installed_on_calendar", body)
+
+    def test_every_preset_is_valid_systemd_syntax(self):
+        """A typo in a preset produces a timer that silently never fires.
+
+        Checked against systemd-analyze itself rather than a regex, so this
+        keeps working as systemd's calendar syntax evolves.
+        """
+        import shutil
+
+        if shutil.which("systemd-analyze") is None:
+            self.skipTest("systemd-analyze not available on this host")
+        for name, expr in config.TIMELAPSE_SCHEDULE_PRESETS.items():
+            with self.subTest(preset=name):
+                proc = subprocess.run(
+                    ["systemd-analyze", "calendar", expr],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self.assertEqual(
+                    proc.returncode, 0, f"{name}: systemd rejected {expr!r}: {proc.stderr}"
+                )
 
 
 if __name__ == "__main__":

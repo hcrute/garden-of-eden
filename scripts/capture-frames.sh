@@ -35,6 +35,17 @@ for name in camera.CAMERAS:
     camera.archive_frame(path, name)
     log.info("archived %s frame -> %s", name, config.TIMELAPSE_DIR)
 
+# Rebuild the mp4 so the player is current without a manual Build press.
+# Off by default: this re-encodes every retained frame, so on a Pi it is the
+# most expensive thing this script could do.
+if config.TIMELAPSE_AUTO_BUILD:
+    for name in camera.CAMERAS:
+        try:
+            camera.generate_timelapse(name)
+            log.info("rebuilt %s timelapse", name)
+        except Exception as exc:
+            log.error("timelapse rebuild failed for %s: %s", name, exc)
+
 print(
     "frames kept: %d/%d, playback %d fps"
     % (

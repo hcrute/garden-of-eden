@@ -424,6 +424,15 @@
         <figure class="cam"><video id="tl-upper" controls preload="metadata" playsinline muted loop></video><figcaption>Upper timelapse</figcaption></figure>
         <figure class="cam" data-lower-camera><video id="tl-lower" controls preload="metadata" playsinline muted loop></video><figcaption>Lower timelapse</figcaption></figure>
       </div>
+      <p id="tl-schedule" style="color:var(--muted);font-size:13px;margin:12px 0 0"></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <button class="ghost" onclick="downloadFrames('upper')">Download upper photos</button>
+        <button class="ghost" data-lower-camera onclick="downloadFrames('lower')">Download lower photos</button>
+        <span style="color:var(--muted);font-size:13px">optional date range</span>
+        <input type="date" id="tl-from" aria-label="From date" style="font-size:13px">
+        <span style="color:var(--muted);font-size:13px">to</span>
+        <input type="date" id="tl-to" aria-label="To date" style="font-size:13px">
+      </div>
     </div>
 
     <div class="card">
@@ -830,6 +839,50 @@
       if (r && !r.error) setAuthedMedia($("tl-" + cam), "/camera/timelapse/" + cam + "?t=" + Date.now());
     }
 
+    async function loadTimelapseConfig() {
+      try {
+        const c = await get("/camera/timelapse-config");
+        const bits = ["Schedule: " + c.schedule + (c.is_preset ? "" : " (custom OnCalendar)")];
+        if (c.next_runs && c.next_runs.length) bits.push("next " + c.next_runs[0]);
+        bits.push(c.frames_archived + "/" + c.max_frames + " photos kept");
+        bits.push(c.fps + " fps");
+        if (c.auto_build) bits.push("auto-rebuild on");
+        // .env is the input but the unit is what systemd runs; saying so beats
+        // showing a schedule that is not actually in effect.
+        if (c.pending_change) bits.push("installer re-run needed to apply");
+        $("tl-schedule").textContent = bits.join(" · ");
+      } catch (e) { /* status line is optional; never block the page */ }
+    }
+    async function downloadFrames(cam) {
+      if (cam === "lower" && !lowerCameraEnabled) return;
+      const params = new URLSearchParams();
+      const from = $("tl-from").value, to = $("tl-to").value;
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      const q = params.toString();
+      toast("Packaging " + cam + " photos…");
+      try {
+        // Fetched rather than linked: a plain href cannot carry X-API-Key, so
+        // it would come back 401 on any device that is not localhost.
+        const r = await fetchT("/camera/timelapse/" + cam + "/frames.zip" + (q ? "?" + q : ""), { headers: headers() }, 120000);
+        if (!r.ok) {
+          let msg = "error " + r.status;
+          try { const d = await r.json(); if (d && d.error) msg = d.error; } catch {}
+          toast(msg, true); return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "gardyn-" + cam + "-frames.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        toast("Downloaded " + cam + " photos");
+      } catch (e) { toast("download failed: " + e.message, true); }
+    }
+
     // Drive a level slider and its label from the value the machine reports.
     // Skipped while that control has focus, so the periodic sync cannot yank
     // the slider out from under someone who is dragging it.
@@ -1189,7 +1242,7 @@
     $("set-theme").value = localStorage.getItem("theme") || "dark";
     $("set-caminterval").value = camInterval;
     applyTempUnit();
-    loadSystem(); refresh(); loadGrow(); loadSchedule(); loadPods(); loadCams(); loadTimelapses(); syncToggles(); ping();
+    loadSystem(); refresh(); loadGrow(); loadSchedule(); loadPods(); loadCams(); loadTimelapses(); loadTimelapseConfig(); syncToggles(); ping();
     setInterval(refresh, 30000);
     // Keep the level sliders honest while the page stays open: the schedule
     // changes brightness and pump speed unattended (06:00 ramp on, 22:00 ramp

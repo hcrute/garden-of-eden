@@ -171,6 +171,29 @@ TIMELAPSE_DIR = os.getenv(
 TIMELAPSE_MAX_FRAMES = _get_int("TIMELAPSE_MAX_FRAMES", 720)
 TIMELAPSE_FPS = _get_int("TIMELAPSE_FPS", 12)
 
+# Capture schedule. These are systemd OnCalendar expressions, which the timer
+# unit uses directly, so the whole of systemd's calendar syntax is available to
+# anyone who wants it -- the presets below are conveniences, not a limit.
+# Preset names are resolved by scripts/install-timelapse-timer.sh; anything
+# that is not a preset name is passed through to OnCalendar untouched.
+TIMELAPSE_SCHEDULE_PRESETS = {
+    "hourly": "hourly",
+    "every-30-min": "*:0/30",
+    "every-15-min": "*:0/15",
+    "every-5-min": "*:0/5",
+    # "daily" is deliberately not midnight: that is the worst possible moment
+    # to photograph a plant, since the lights are off.
+    "daily": "*-*-* 08:00:00",
+    "daily-early": "*-*-* 06:00:00",
+    "twice-daily": "*-*-* 06,18:00:00",
+    "every-6-hours": "*-*-* 00/6:00:00",
+}
+TIMELAPSE_SCHEDULE = os.getenv("TIMELAPSE_SCHEDULE", "hourly")
+# Rebuild the mp4 after each capture. Off by default: ffmpeg re-encodes every
+# retained frame, which on a Pi is real CPU for a video most people watch once
+# a day. Turn it on if you want the player to always be current.
+TIMELAPSE_AUTO_BUILD = _get_bool("TIMELAPSE_AUTO_BUILD", False)
+
 # ---------------------------------------------------------------------------
 # REST API auth (optional). When GARDEN_ADMIN_PASSWORD is set, non-localhost
 # requests must send it via the X-API-Key header. Localhost (cron) bypasses.

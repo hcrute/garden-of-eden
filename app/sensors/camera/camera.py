@@ -89,6 +89,59 @@ def archive_frame(src_path, cam):
         logger.error("Timelapse archive failed for %s: %s", cam, exc)
 
 
+def frame_files(cam, start=None, end=None):
+    """Archived frames for ``cam``, optionally limited to a date range.
+
+    ``start`` and ``end`` are ``datetime.date`` or ``datetime.datetime``; the
+    range is inclusive of both ends. They are compared against the timestamp
+    encoded in each filename rather than the file mtime, so re-capturing or
+    copying a frame does not move it into the wrong day.
+
+    Returns a list of paths, oldest first.
+    """
+    pattern = os.path.join(_frames_dir(cam), "*.jpg")
+    out = []
+    for path in sorted(glob.glob(pattern)):
+        stamp = os.path.basename(path)[:15]
+        try:
+            when = datetime.datetime.strptime(stamp, "%Y%m%d-%H%M%S")
+        except ValueError:
+            continue  # not one of ours; leave it alone
+        if start is not None and when.date() < _as_date(start):
+            continue
+        if end is not None and when.date() > _as_date(end):
+            continue
+        out.append(path)
+    return out
+
+
+def _as_date(value):
+    """Normalize a date or datetime to a date."""
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    return value
+
+
+def zip_frames(cam, start=None, end=None):
+    """Zip the archived frames for ``cam`` and return it as bytes.
+
+    Used by the download endpoint so a phone or laptop on the tailnet can pull
+    the raw JPEGs without needing shell access to the Pi. Frames are stored
+    uncompressed: JPEG does not compress further, and spending CPU here would
+    be the slowest part of an export that is otherwise just a file copy.
+    """
+    import io
+    import zipfile
+
+    paths = frame_files(cam, start, end)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for path in paths:
+            zf.write(path, arcname=os.path.join(cam, os.path.basename(path)))
+    buf.seek(0)
+    return buf, len(paths)
+
+
 def generate_timelapse(cam):
     """Assemble the archived frames for ``cam`` into an mp4. Raises
     FileNotFoundError if no frames have been archived yet, or if ffmpeg is not
