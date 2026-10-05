@@ -74,6 +74,45 @@ def duty_fraction(pin, pi=None):
     return max(0.0, min(1.0, float(duty) / float(rng)))
 
 
+def pwm_claimed(pin, pi=None):
+    """Whether this process can currently drive ``pin`` as PWM.
+
+    The duty-cycle register is not evidence of anything. After the 06:00 sunrise
+    ramp exits, gpiozero releases the pin at process teardown and pigpiod drops
+    its PWM claim -- but the register still reads the value it last held. So
+    the light read "30%" while the pin was driving nothing and the API's writes
+    were all rejected with 'GPIO is not in use for PWM'.
+
+    Asking pigpiod directly is the only way to tell those apart. This rewrites
+    the duty cycle with the value it already holds: no change to the hardware,
+    and it raises if the PWM claim is gone.
+    """
+    own = pi is None
+    if own:
+        try:
+            import pigpio
+
+            pi = pigpio.pi()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not connect to pigpiod: %s", exc)
+            return None
+    try:
+        if not getattr(pi, "connected", False):
+            return None
+        duty = pi.get_PWM_dutycycle(pin)
+        pi.set_PWM_dutycycle(pin, duty)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PWM claim lost on pin %s: %s", pin, exc)
+        return False
+    finally:
+        if own:
+            try:
+                pi.stop()
+            except Exception:  # noqa: BLE001
+                pass
+    return True
+
+
 def light_actual(pin=None):
     """What the light pin is actually doing right now."""
     pin = config.LIGHT_PIN if pin is None else pin
@@ -111,6 +150,7 @@ def verify_lights(schedule=None, now=None):
     state = state_lib.load_state()
     expected = sched.light_state_now(schedule, now=now) if schedule is not None else None
     actual = light_actual()
+    pin = config.LIGHT_PIN
 
     report = {
         "expected": expected,
@@ -125,6 +165,22 @@ def verify_lights(schedule=None, now=None):
         return report
     if actual is None:
         report["detail"] = "the light pin could not be read"
+        return report
+
+    # The register can read a healthy-looking duty cycle while pigpiod has
+    # dropped its PWM claim, which is what a released pin looks like. Checking
+    # it separately is the difference between "the light is on" and "the light
+    # is on according to a stale register and cannot be driven at all".
+    claimed = pwm_claimed(pin)
+    report["pwm_claimed"] = claimed
+    if claimed is False:
+        report["ok"] = False
+        report["detail"] = (
+            "pigpiod has released the PWM claim on the light pin; the register "
+            "still reads "
+            f"{actual['brightness']}% but nothing is driving it. Re-create the "
+            "Light (restart garden-api.service) to re-claim the pin."
+        )
         return report
 
     if expected["on"] and not actual["on"]:

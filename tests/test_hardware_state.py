@@ -74,7 +74,70 @@ class DutyFractionTestCase(unittest.TestCase):
         self.assertFalse(pi.stopped, "the caller's pigpio connection must be left open")
 
 
-class ActuatorReadTestCase(unittest.TestCase):
+class PwmClaimTestCase(unittest.TestCase):
+    """A released pin still reads a healthy-looking duty cycle.
+
+    gpiozero releases GPIO when a Light is collected, and the 06:00 sunrise
+    ramp is a short-lived process: when it exits, pigpiod drops its PWM claim
+    while the register keeps the value it last held. That is how the light read
+    "30%" and was not actually being driven.
+    """
+
+    def test_true_when_the_write_succeeds(self):
+        pi = MagicMock()
+        pi.connected = True
+        pi.get_PWM_dutycycle.return_value = 3000
+        self.assertTrue(hs.pwm_claimed(18, pi=pi))
+
+    def test_false_when_the_write_is_rejected(self):
+        pi = MagicMock()
+        pi.connected = True
+        pi.get_PWM_dutycycle.return_value = 3000
+        pi.set_PWM_dutycycle.side_effect = Exception("GPIO is not in use for PWM")
+        self.assertFalse(hs.pwm_claimed(18, pi=pi))
+
+    def test_none_when_pigpiod_is_unreachable(self):
+        pi = MagicMock()
+        pi.connected = False
+        self.assertIsNone(hs.pwm_claimed(18, pi=pi))
+
+    def test_rewrites_the_same_value_so_nothing_changes(self):
+        pi = MagicMock()
+        pi.connected = True
+        pi.get_PWM_dutycycle.return_value = 3000
+        hs.pwm_claimed(18, pi=pi)
+        pi.set_PWM_dutycycle.assert_called_once_with(18, 3000)
+
+    def _verify(self, claimed, actual):
+        with (
+            patch.object(hs, "light_actual", return_value=actual),
+            patch.object(hs, "pwm_claimed", return_value=claimed),
+            patch(
+                "app.sensors.schedule.schedule.light_state_now",
+                return_value={"on": True, "brightness": 30, "reason": "inside"},
+            ),
+            patch("app.lib.state.load_state", return_value={"light_on": True, "brightness": 30}),
+        ):
+            return hs.verify_lights({})
+
+    def test_a_lost_claim_is_a_fault_even_when_the_register_looks_fine(self):
+        # This is the exact state of the Pi at 06:19 this morning.
+        r = self._verify(False, {"on": True, "brightness": 30.0})
+        self.assertFalse(r["ok"])
+        self.assertIn("released the PWM claim", r["detail"])
+
+    def test_a_held_claim_with_a_matching_level_is_ok(self):
+        self.assertTrue(self._verify(True, {"on": True, "brightness": 30.0})["ok"])
+
+    def test_an_unreadable_claim_does_not_manufacture_a_fault(self):
+        # None means "could not tell", which is not the same as "lost".
+        r = self._verify(None, {"on": True, "brightness": 30.0})
+        self.assertTrue(r["ok"])
+        self.assertIsNone(r["pwm_claimed"])
+
+
+if __name__ == "__main__":
+
     def test_light_actual_reads_the_light_pin(self):
         with patch.object(hs, "duty_fraction", return_value=0.3) as m:
             got = hs.light_actual()

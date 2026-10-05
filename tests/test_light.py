@@ -1,10 +1,13 @@
 import os
 import sys
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 # Add the root directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app import create_app
+from app.lib.guards import check_sensor_guard
 from app.sensors.light.light import Light
 
 
@@ -143,3 +146,81 @@ class LightConstructionIsNonDestructive(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReclaimOnLostPwmClaim(unittest.TestCase):
+    """The light routes must survive another process releasing the pin.
+
+    gpiozero releases GPIO when a Light is collected. The 06:00 sunrise ramp is
+    a short-lived process, so when it exits pigpiod drops its PWM claim on the
+    pin and the long-lived API -- holding a Light since yesterday -- can no
+    longer write to it. Every light request then fails with 'GPIO is not in use
+    for PWM' while the duty-cycle register still reports the old brightness.
+    """
+
+    def setUp(self):
+        import app.sensors.light.routes as routes
+
+        self.routes = routes
+        self.app = create_app("default")
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+        self.routes.check_sensor = check_sensor_guard(
+            sensor=self.routes.light_control, sensor_name="Light"
+        )
+        # Rebuild the wrapped views so they close over the patched guard.
+        for rule in self.app.url_map.iter_rules():
+            pass
+
+    def test_reclaim_rebuilds_the_device(self):
+        with patch.object(self.routes, "LightControl") as new_cls:
+            new_cls.return_value = unittest.mock.MagicMock()
+            self.assertTrue(self.routes.reclaim_light())
+        new_cls.assert_called_once()
+
+    def test_reclaim_survives_a_device_that_will_not_close(self):
+        old = unittest.mock.MagicMock()
+        old.close.side_effect = RuntimeError("already gone")
+        with (
+            patch.object(self.routes, "light_control", old),
+            patch.object(self.routes, "LightControl") as new_cls,
+        ):
+            new_cls.return_value = unittest.mock.MagicMock()
+            self.assertTrue(self.routes.reclaim_light())
+
+    def test_reclaim_reports_failure_when_the_pin_cannot_be_rebuilt(self):
+        with patch.object(self.routes, "LightControl", side_effect=OSError("pigpiod down")):
+            self.assertFalse(self.routes.reclaim_light())
+
+    def test_retry_wrapper_reruns_after_reclaiming(self):
+        calls = []
+
+        @self.routes.with_reclaim
+        def flaky():
+            calls.append(1)
+            if len(calls) == 1:
+                raise Exception("GPIO is not in use for PWM")
+            return "done"
+
+        with patch.object(self.routes, "reclaim_light", return_value=True):
+            self.assertEqual(flaky(), "done")
+        self.assertEqual(len(calls), 2)
+
+    def test_retry_wrapper_does_not_swallow_other_errors(self):
+        @self.routes.with_reclaim
+        def broken():
+            raise OSError("i2c bus gone")
+
+        with patch.object(self.routes, "reclaim_light") as rec:
+            with self.assertRaises(OSError):
+                broken()
+        rec.assert_not_called()
+
+    def test_retry_wrapper_reraises_when_reclaim_fails(self):
+        @self.routes.with_reclaim
+        def flaky():
+            raise Exception("GPIO is not in use for PWM")
+
+        with patch.object(self.routes, "reclaim_light", return_value=False):
+            with self.assertRaises(Exception):
+                flaky()
