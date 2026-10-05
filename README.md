@@ -558,6 +558,55 @@ Two deliberate limits:
 A window that wraps past midnight (22:00-06:00) is handled, including the
 early-morning half, which uses the *previous* day's brightness.
 
+#### Checking the hardware actually matches
+
+```
+curl -H "X-API-Key: $GARDEN_ADMIN_PASSWORD" \
+  http://localhost:5000/schedule/hardware
+```
+
+returns three numbers, deliberately kept apart:
+
+| Field | Source | Trust |
+| --- | --- | --- |
+| `expected` | the schedule, evaluated now | what this machine *intends* |
+| `commanded` | `STATE_FILE` | what it last recorded writing |
+| `actual` | pigpiod, read from the pin right now | the only independent evidence |
+
+```json
+{"lights": {"expected": {"on": true, "brightness": 30},
+            "commanded": {"on": true, "brightness": 30},
+            "actual": {"on": true, "brightness": 30.0},
+            "ok": true,
+            "detail": "lights on; pin reads 30.0% (schedule says 30%)"}}
+```
+
+`ok` is true only when `expected` and `actual` agree. A difference between
+`expected` and `commanded` is normal after a manual override; a difference
+involving `actual` is the machine not doing what it was told.
+
+This exists because of a specific blind spot. `gpiozero`'s `PWMLED.value` is a
+**per-process cache of what that process last wrote**, not a reading of the
+pin, and three processes drive the light: the REST API, `mqtt.py`, and the cron
+scripts. When the hourly timelapse capture zeroed the pin, the API went on
+reporting the brightness it had set hours earlier -- correct according to its
+cache, wrong according to the hardware.
+
+Note the PWM scale, which is easy to get wrong: `gpiozero` writes 0.0-1.0 and
+pigpiod stores it on its own configurable range, **10000** on this hardware
+rather than the default 255. Measured on the Pi:
+
+```
+set 50% via gpiozero  ->  get_PWM_dutycycle 5000 / get_PWM_range 10000
+```
+
+so the true level is always `dutycycle / range`. Dividing by 255 is not a 39x
+error, it is meaningless.
+
+`actual` is `null` when the pin cannot be read, rather than `0` -- reporting a
+dead pigpiod as "the lights are off" would look exactly like the fault this
+endpoint exists to detect.
+
 #### The symlinks cron calls
 
 Those two commands are symlinks created by `scripts/setup.sh`:

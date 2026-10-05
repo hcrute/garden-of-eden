@@ -43,16 +43,15 @@ class Light:
     def _initial_value(self):
         """Brightness to start at, taken from the persisted actuator state.
 
-        Deliberately not read back from the pin. gpiozero's pigpio pins are
-        PinPWMFixedValue, which always writes 0-255, but pigpio's configured
-        range on this hardware is 10000 -- so a duty cycle read from pigpio
-        does not mean what a gpiozero 0.0-1.0 value means, and converting
-        between them silently rescales the light. Reading 10000 and dividing
-        by 255 is not a 39x error, it is nonsense.
+        The persisted state is used rather than the pin because construction
+        happens at import, and the pin may be mid-flight under another
+        process's control. See app/lib/hardware_state.py for reading the pin
+        as an independent check.
 
-        The persisted state is the app's own source of truth, the same one
-        mqtt.py restores on startup, and it does not depend on pigpio's
-        internals at all.
+        Note gpiozero's PWMLED.value is *not* usable for this: it is a
+        per-process cache of what this process last wrote. Three processes
+        touch the light -- the API, mqtt.py and the cron scripts -- so it
+        reports whatever this one set regardless of what another did since.
         """
         try:
             from app.lib import state as state_lib

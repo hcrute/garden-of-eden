@@ -290,19 +290,40 @@ class ReconcileLightsTestCase(unittest.TestCase):
     def _light(self, brightness, recorder=None):
         """A stand-in for the module-level light_control singleton."""
         light = unittest.mock.MagicMock()
-        light.get_brightness.return_value = brightness
         if recorder is not None:
             light.set_brightness.side_effect = lambda v: recorder.append(("set", v))
             light.off.side_effect = lambda: recorder.append(("off", 0))
         return light
 
-    def _patched(self, light):
+    def _patched(self, light, actual_on=True, actual_brightness=50.0):
+        """Patch both the device and the independent pin read.
+
+        reconcile_lights deliberately does not ask the device what it thinks it
+        set -- it reads the pin. Patch hw_state.light_actual, or the test
+        silently exercises the old cache-based path.
+        """
+        import contextlib
+
         import app.sensors.light.routes as light_routes
 
-        return patch.object(light_routes, "light_control", light)
+        @contextlib.contextmanager
+        def both():
+            with (
+                patch.object(light_routes, "light_control", light),
+                patch(
+                    "app.sensors.schedule.routes.hw_state.light_actual",
+                    return_value={"on": actual_on, "brightness": actual_brightness},
+                ),
+            ):
+                yield
 
-    def _post(self, schedule, light):
-        with self._patched(light), patch.object(sched, "_write_crontab", lambda lines: None):
+        return both()
+
+    def _post(self, schedule, light, actual_on=True, actual_brightness=50.0):
+        with (
+            self._patched(light, actual_on, actual_brightness),
+            patch.object(sched, "_write_crontab", lambda lines: None),
+        ):
             return self.client.post("/schedule", json=schedule)
 
     def test_turns_the_light_on_when_inside_a_window(self):
@@ -322,7 +343,7 @@ class ReconcileLightsTestCase(unittest.TestCase):
             "app.sensors.schedule.routes.sched.light_state_now",
             return_value={"on": True, "brightness": 45, "reason": "inside"},
         ):
-            resp = self._post(schedule, light)
+            resp = self._post(schedule, light, actual_on=False, actual_brightness=0.0)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(calls, [("set", 45)])
         self.assertTrue(resp.get_json()["lights_reconciled"])
@@ -337,7 +358,7 @@ class ReconcileLightsTestCase(unittest.TestCase):
             "app.sensors.schedule.routes.sched.light_state_now",
             return_value={"on": True, "brightness": 45, "reason": "inside"},
         ):
-            resp = self._post(schedule, light)
+            resp = self._post(schedule, light, actual_on=True, actual_brightness=80.0)
         self.assertEqual(calls, [])
         self.assertNotIn("lights_reconciled", resp.get_json())
 
@@ -349,7 +370,7 @@ class ReconcileLightsTestCase(unittest.TestCase):
             "app.sensors.schedule.routes.sched.light_state_now",
             return_value={"on": False, "brightness": None, "reason": "outside"},
         ):
-            resp = self._post(schedule, light)
+            resp = self._post(schedule, light, actual_on=True, actual_brightness=60.0)
         self.assertEqual(calls, [("off", 0)])
         self.assertEqual(resp.get_json()["action"], "turned off")
 
@@ -361,7 +382,7 @@ class ReconcileLightsTestCase(unittest.TestCase):
             "app.sensors.schedule.routes.sched.light_state_now",
             return_value={"on": False, "brightness": None, "reason": "outside"},
         ):
-            resp = self._post(schedule, light)
+            resp = self._post(schedule, light, actual_on=False, actual_brightness=0.0)
         self.assertEqual(calls, [])
         self.assertNotIn("lights_reconciled", resp.get_json())
 
@@ -375,7 +396,7 @@ class ReconcileLightsTestCase(unittest.TestCase):
             "app.sensors.schedule.routes.sched.light_state_now",
             return_value={"on": True, "brightness": 45, "reason": "inside"},
         ):
-            self._post(schedule, light)
+            self._post(schedule, light, actual_on=False, actual_brightness=0.2)
         self.assertEqual(calls, [("set", 45)])
 
     def test_schedule_save_survives_a_dead_light(self):
@@ -397,7 +418,7 @@ class ReconcileLightsTestCase(unittest.TestCase):
             "app.sensors.schedule.routes.sched.light_state_now",
             return_value={"on": True, "brightness": 45, "reason": "inside"},
         ):
-            resp = self._post(schedule, light)
+            resp = self._post(schedule, light, actual_on=False, actual_brightness=0.0)
         self.assertEqual(resp.status_code, 200)
 
     def test_get_reports_what_the_schedule_thinks_right_now(self):
