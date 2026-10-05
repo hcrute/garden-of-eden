@@ -123,7 +123,11 @@ class Pump:
             self.gpio.pi.stop()
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    """Entry point for the CLI that cron invokes.
+
+    Callable so tests can drive it with a mocked pump; see Light.main.
+    """
     parser = argparse.ArgumentParser(description="Control a pump.")
     parser.add_argument("--on", action="store_true", help="Turn the pump on.")
     parser.add_argument("--off", action="store_true", help="Turn the pump off.")
@@ -135,7 +139,7 @@ if __name__ == "__main__":
         "--factory-port", type=int, default=None, help="GPIO factory port for remote access."
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     pin_factory = None
     if args.factory_host and args.factory_port:
@@ -143,14 +147,35 @@ if __name__ == "__main__":
 
     pump = Pump(pin_factory=pin_factory)  # pins/frequency from config
 
+    # Persist what this invocation does. Cron runs the watering schedule through
+    # this CLI, so without it the state file goes stale and a later process that
+    # seeds from it would re-energise the pump. See Light's CLI for the same
+    # reasoning. Best-effort: never block the pump on a state-file write.
+    def _remember(**changes):
+        try:
+            from app.lib import state as state_lib
+
+            state_lib.save_state(**changes)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Could not persist pump state: %s", exc)
+
     if args.on:
         pump.on()
         if args.speed is not None:
             pump.set_speed(args.speed)
+            _remember(pump_on=args.speed > 0, speed=max(0, min(100, args.speed)))
+        else:
+            _remember(pump_on=True)
     elif args.off:
         pump.off()
+        _remember(pump_on=False)
     elif args.speed is not None:
         pump.on()
         pump.set_speed(args.speed)
+        _remember(pump_on=args.speed > 0, speed=max(0, min(100, args.speed)))
     else:
         print("No action specified. Use --on, --off, or --speed.")
+
+
+if __name__ == "__main__":
+    main()

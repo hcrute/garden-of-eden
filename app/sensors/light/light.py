@@ -157,7 +157,13 @@ def ramp_to(light, target, minutes):
     light.set_brightness(target)
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    """Entry point for the CLI that cron invokes.
+
+    Split out of the __main__ block so it can be called with a mocked device in
+    tests: as an un-callable script body, the only way to test it was to read
+    the source and assert on the text, which proves nothing about behaviour.
+    """
     parser = argparse.ArgumentParser(description="Control an IoT light.")
     parser.add_argument("--on", action="store_true", help="Turn the light on.")
     parser.add_argument("--off", action="store_true", help="Turn the light off.")
@@ -171,20 +177,51 @@ if __name__ == "__main__":
         help="Gradually ramp to --brightness over this many minutes (sunrise/sunset).",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     light = Light()  # pins/frequency from config
 
+    # Persist whatever this invocation ends up doing.
+    #
+    # Cron drives the sunrise and the sunset through this CLI, so without this
+    # the state file goes stale: the 22:00 fade would take the pin to zero
+    # while the file still claimed light_on true. Anything that later builds a
+    # Light seeds from that file -- app/lib/hardware_state.py's whole reason for
+    # existing is that a stale belief must not drive the pin -- so the lights
+    # would come back on at full brightness for the rest of the night.
+    #
+    # Best-effort: a failure to write the state file must not stop the lights
+    # being turned on or off.
+    def _remember(**changes):
+        try:
+            from app.lib import state as state_lib
+
+            state_lib.save_state(**changes)
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("Could not persist light state: %s", exc)
+
     if args.ramp_minutes and args.brightness is not None:
         ramp_to(light, args.brightness, args.ramp_minutes)
+        # Record the destination, not each step: mid-fade the pin is neither
+        # the old value nor the new one, and what matters is where it lands.
+        _remember(light_on=args.brightness > 0, brightness=max(0, min(100, args.brightness)))
     elif args.on:
         light.on()
         if args.brightness is not None:
             light.set_brightness(args.brightness)
+            _remember(light_on=True, brightness=max(0, min(100, args.brightness)))
+        else:
+            _remember(light_on=True)
     elif args.off:
         light.off()
+        _remember(light_on=False)
     elif args.brightness is not None:
         light.on()
         light.set_brightness(args.brightness)
+        _remember(light_on=args.brightness > 0, brightness=max(0, min(100, args.brightness)))
     else:
         logging.info("No action specified. Use --on, --off, or --brightness.")
+
+
+if __name__ == "__main__":
+    main()
