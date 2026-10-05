@@ -235,21 +235,38 @@ button.when_held = handle_long_press
 
 # helpers
 def flash_lights(times=3, delay=0.3):
+    """Flash the lights, then put them back exactly as they were.
+
+    The restore is in a ``finally`` because this is called from the MQTT
+    command handler: an exception part-way through -- ``light.off()`` raising
+    once pigpiod has gone, say -- would otherwise leave the grow lights off,
+    with no command ever having been given and nothing in the log to explain
+    it. That is the same class of fault as the timelapse capture zeroing the
+    pin: an actuator left somewhere nobody asked for.
+
+    The persisted state is re-saved too, so the state file cannot end up
+    claiming the lights are on at 30% while the pin sits at zero.
+    """
     original_brightness = light.get_brightness()  # Save the brightness (0–100 scale)
     was_on = original_brightness > 0  # If >0%, we consider it "on"
 
     logger.info(f"Flashing lights {times} times. Original brightness: {original_brightness}%")
 
-    for _ in range(times):
-        light.off()
-        sleep(delay)
-        light.set_brightness(100)  # Flash full brightness for maximum visibility
-        sleep(delay)
-    # Restore original state
-    if was_on:
-        light.set_brightness(original_brightness)
-    else:
-        light.off()
+    try:
+        for _ in range(times):
+            light.off()
+            sleep(delay)
+            light.set_brightness(100)  # Flash full brightness for maximum visibility
+            sleep(delay)
+    finally:
+        try:
+            if was_on:
+                light.set_brightness(original_brightness)
+            else:
+                light.off()
+            state_lib.save_state(light_on=was_on, brightness=int(round(original_brightness)))
+        except Exception as exc:  # noqa: BLE001 - never mask the original error
+            logger.error(f"Failed to restore light state after flashing: {exc}")
 
 
 def safe_distance_measure():

@@ -8,6 +8,7 @@ so nothing touches the host, and the state files live in a temp dir.
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 
 class FakeClient:
@@ -136,6 +137,85 @@ class MqttControlTestCase(unittest.TestCase):
         self.send("grow/stage/set", "harvest")
         self.send("grow/start/set", "PRESS")
         self.assertEqual(self.mqtt.grow_lib.load_state()["stage"], "germination")
+
+
+class FlashLightsTestCase(unittest.TestCase):
+    """flash_lights must always put the grow lights back.
+
+    It runs from the MQTT command handler. Before the try/finally, an
+    exception part-way through -- light.off() raising once pigpiod had gone --
+    left the lights off with no command given and nothing in the log, the same
+    class of fault as the timelapse capture zeroing the pin.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        import config
+        import mqtt
+
+        self.mqtt = mqtt
+        self.config = config
+        self._state_file = config.STATE_FILE
+        config.STATE_FILE = os.path.join(self.tmp, "state.json")
+        self.addCleanup(setattr, config, "STATE_FILE", self._state_file)
+
+        self.calls = []
+        self.light = unittest.mock.MagicMock()
+        self.light.get_brightness.return_value = self.brightness
+        self.light.set_brightness.side_effect = lambda v: self.calls.append(("set", v))
+        self.light.off.side_effect = lambda: self.calls.append(("off", None))
+        self._light = mqtt.light
+        mqtt.light = self.light
+        self.addCleanup(setattr, mqtt, "light", self._light)
+        self._sleep = mqtt.sleep
+        mqtt.sleep = lambda s: None
+        self.addCleanup(setattr, mqtt, "sleep", self._sleep)
+
+    brightness = 30.0
+
+    def test_restores_the_original_brightness_after_flashing(self):
+        self.mqtt.flash_lights(times=2, delay=0)
+        self.assertEqual(self.calls[-1], ("set", 30.0))
+        self.assertIn(("set", 100), self.calls)
+
+    def test_restores_off_when_it_was_off(self):
+        self.light.get_brightness.return_value = 0.0
+        self.mqtt.flash_lights(times=1, delay=0)
+        self.assertEqual(self.calls[-1], ("off", None))
+
+    def test_restores_when_a_flash_step_raises(self):
+        # Only the flash step fails; the restore must still happen, and must
+        # still raise the original error afterwards rather than swallow it.
+        def flaky(value):
+            if value == 100:
+                raise OSError("pigpiod went away")
+            self.calls.append(("set", value))
+
+        self.light.set_brightness.side_effect = flaky
+        with self.assertRaises(OSError):
+            self.mqtt.flash_lights(times=1, delay=0)
+        self.assertEqual(self.calls[-1], ("set", 30.0))
+
+    def test_restores_when_sleep_raises(self):
+        def bad_sleep(_s):
+            raise KeyboardInterrupt
+
+        self.mqtt.sleep = bad_sleep
+        with self.assertRaises(KeyboardInterrupt):
+            self.mqtt.flash_lights(times=1, delay=0)
+        self.assertIn(("off", None), self.calls)
+
+    def test_a_failing_restore_does_not_mask_the_original_error(self):
+        self.light.get_brightness.return_value = 30.0
+        self.light.set_brightness.side_effect = OSError("pin gone")
+        with self.assertRaises(OSError):
+            self.mqtt.flash_lights(times=1, delay=0)
+
+    def test_state_file_agrees_with_the_pin_afterwards(self):
+        self.mqtt.flash_lights(times=1, delay=0)
+        state = self.mqtt.state_lib.load_state()
+        self.assertTrue(state["light_on"])
+        self.assertEqual(state["brightness"], 30)
 
 
 if __name__ == "__main__":
