@@ -22,6 +22,7 @@ IT=$(echo -e '\033[3m')
 
 # Get Garden of Eden path from script location
 GOE_PATH=$(realpath "$(dirname "$(readlink -e "${0}")")/..")
+readonly API_CALL="${GOE_PATH}/scripts/garden-api-call.sh"
 # Put the repo root on PYTHONPATH so the driver scripts can `import config`
 # regardless of the caller's working directory (cron, systemd, etc.).
 export PYTHONPATH="${GOE_PATH}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -34,20 +35,37 @@ if [[ -z "${TIME_MAX}" && -f "${GOE_PATH}/.env" ]]; then
 fi
 readonly TIME_MAX="${TIME_MAX:-900}"
 
+# Drive the pump through the API, which is the single long-lived owner of the
+# pin. Same reasoning as light.sh: this script is short-lived and would release
+# the pin on exit, leaving the API unable to control the pump. Direct GPIO is
+# the fallback for when the API is down.
+#
 # Turn off water pump
 turn_off_water() {
+    "${API_CALL}" POST /pump/off >/dev/null 2>&1 \
+        && return 0
     "${GOE_PATH}/venv/bin/python" "${GOE_PATH}/app/sensors/pump/pump.py" --off
 }
 
 # Turn on water pump
 turn_on_water() {
+    "${API_CALL}" POST /pump/on >/dev/null 2>&1 \
+        && return 0
     "${GOE_PATH}/venv/bin/python" "${GOE_PATH}/app/sensors/pump/pump.py" --on --speed "${SPEED}"
 }
 
-# Function to water for a specified time, then turn off
+# Water for a specified time, then stop.
+#
+# The API's /pump/run arms its own auto-off timer and returns immediately, so
+# this no longer sits in a sleep for three minutes holding the pin. Falls back
+# to driving GPIO directly only when the API is down, which is the one case
+# where there is no long-lived owner to disturb.
 water_for_time() {
     local time="$1"
-	echo "Watering for ${time} seconds."
+    echo "Watering for ${time} seconds."
+    if "${API_CALL}" POST /pump/run "{\"seconds\": ${time}}" >/dev/null 2>&1; then
+        return 0
+    fi
     turn_on_water
     sleep "${time}"
     # turn_off_water # turn off will be caught by the exit trap.

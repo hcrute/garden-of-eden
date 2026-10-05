@@ -607,6 +607,47 @@ error, it is meaningless.
 dead pigpiod as "the lights are off" would look exactly like the fault this
 endpoint exists to detect.
 
+#### The API owns the pins
+
+Three processes used to drive GPIO18 and GPIO24: the API, the cron CLIs behind
+`/usr/local/bin`, and anything that merely imported `app.*`. Each built its own
+`gpiozero` device, and each **released the pin when it exited** — pigpiod drops
+its PWM claim with it. Only the API is long-lived, so it was the one left
+unable to write:
+
+```
+06:15:16  the 06:00 sunrise ramp process exits
+06:15:24  ERROR 'GPIO is not in use for PWM'   every request, until a restart
+```
+
+The duty-cycle register is *not* released with the claim, so the light still
+read 30% throughout. The plants had light; the control surface was dead.
+
+Now there is one owner:
+
+- **`light.sh` / `water.sh` ask the API** via `scripts/garden-api-call.sh`, and
+  fall back to direct GPIO only when the API is down — the one case where
+  there is no long-lived process to disturb.
+- **`POST /light/ramp`** fades on a background thread inside the API and returns
+  `202` immediately, so cron is not blocked for the length of the fade and the
+  pin is never released. A new ramp supersedes one in flight.
+- **`water <seconds>`** uses `POST /pump/run`, which arms the API's own auto-off
+  timer, so the pump no longer has to be held by a sleeping process.
+- **`app/__init__.py` no longer imports blueprints at module scope.** Importing
+  a routes module builds its hardware, so *any* `import app.<anything>` used to
+  open the GPIO pins. `scripts/capture-frames.sh` imports
+  `app.sensors.camera.camera` only to archive a JPEG, and was zeroing the light
+  pin on every hourly run.
+
+Check who currently holds the pin:
+
+```
+curl -H "X-API-Key: $GARDEN_ADMIN_PASSWORD" http://localhost:5000/schedule/hardware
+```
+
+`pwm_claimed` is the field to look at. If it is `false`, something outside the
+API is still touching the pins.
+
 #### The symlinks cron calls
 
 Those two commands are symlinks created by `scripts/setup.sh`:

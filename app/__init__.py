@@ -6,21 +6,29 @@ from flask_cors import CORS
 
 import config
 
-from .sensors.advice.routes import advice_blueprint
-from .sensors.camera.routes import camera_blueprint
-from .sensors.distance.routes import distance_blueprint
-from .sensors.grow.routes import grow_blueprint
-from .sensors.humidity.routes import humidity_blueprint
-from .sensors.light.routes import light_blueprint
-from .sensors.pcb_temp.routes import pcb_temp_blueprint
-from .sensors.pods.routes import pods_blueprint
-from .sensors.pump.routes import pump_blueprint
-from .sensors.schedule.routes import schedule_blueprint
-from .sensors.system.routes import system_blueprint
-from .sensors.temperature.routes import temperature_blueprint
-from .web.routes import web_blueprint
-
 logger = logging.getLogger(__name__)
+
+# (module path, blueprint attribute, url prefix). Imported inside create_app rather
+# than at module scope on purpose: importing a routes module builds its
+# hardware, so an import here meant that ANY `import app.<anything>` opened the
+# GPIO pins. scripts/capture-frames.sh imports app.sensors.camera.camera only
+# to archive a JPEG, and was silently zeroing the light pin on every run.
+BLUEPRINTS = (
+    (".sensors.light.routes", "light_blueprint", "/light"),
+    (".sensors.pump.routes", "pump_blueprint", "/pump"),
+    (".sensors.distance.routes", "distance_blueprint", "/distance"),
+    (".sensors.temperature.routes", "temperature_blueprint", "/temperature"),
+    (".sensors.humidity.routes", "humidity_blueprint", "/humidity"),
+    (".sensors.pcb_temp.routes", "pcb_temp_blueprint", "/pcb-temp"),
+    (".sensors.camera.routes", "camera_blueprint", "/camera"),
+    (".sensors.schedule.routes", "schedule_blueprint", "/schedule"),
+    (".sensors.grow.routes", "grow_blueprint", "/grow"),
+    (".sensors.pods.routes", "pods_blueprint", "/pods"),
+    (".sensors.system.routes", "system_blueprint", "/system"),
+    (".sensors.advice.routes", "advice_blueprint", "/advice"),
+    # The web UI is not a sensor, so it does not live under sensors/.
+    (".web.routes", "web_blueprint", None),
+)
 
 
 def create_app(config_name=None):
@@ -32,20 +40,13 @@ def create_app(config_name=None):
 
     _register_auth(app)
 
-    # Register blueprints
-    app.register_blueprint(light_blueprint, url_prefix="/light")
-    app.register_blueprint(pump_blueprint, url_prefix="/pump")
-    app.register_blueprint(distance_blueprint, url_prefix="/distance")
-    app.register_blueprint(temperature_blueprint, url_prefix="/temperature")
-    app.register_blueprint(humidity_blueprint, url_prefix="/humidity")
-    app.register_blueprint(pcb_temp_blueprint, url_prefix="/pcb-temp")
-    app.register_blueprint(camera_blueprint, url_prefix="/camera")
-    app.register_blueprint(schedule_blueprint, url_prefix="/schedule")
-    app.register_blueprint(grow_blueprint, url_prefix="/grow")
-    app.register_blueprint(pods_blueprint, url_prefix="/pods")
-    app.register_blueprint(system_blueprint, url_prefix="/system")
-    app.register_blueprint(advice_blueprint, url_prefix="/advice")
-    app.register_blueprint(web_blueprint)
+    # Register blueprints. See BLUEPRINTS for why this is not at module scope.
+    import importlib
+
+    for module_path, attr, prefix in BLUEPRINTS:
+        module = importlib.import_module(module_path, __name__)
+        blueprint = getattr(module, attr)
+        app.register_blueprint(blueprint, **({"url_prefix": prefix} if prefix else {}))
 
     @app.route("/health")
     def health():
