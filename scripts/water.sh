@@ -64,8 +64,18 @@ water_for_time() {
     local time="$1"
     echo "Watering for ${time} seconds."
     if "${API_CALL}" POST /pump/run "{\"seconds\": ${time}}" >/dev/null 2>&1; then
+        # The API owns this run: /pump/run armed its own auto-off timer and
+        # returned. Do NOT arm the exit trap on this path -- this script
+        # returns immediately, so the trap would fire a moment later and send
+        # /pump/off, cancelling the run we just started. (Regression seen at
+        # 12:00: cron fired `water 180`, the pump ran for one second.)
         return 0
     fi
+
+    # API unreachable: drive the pin directly. This process is then the only
+    # thing that will stop the pump, so arm the trap for the sleep below --
+    # it must fire on normal exit and on interruption alike.
+    trap clean_up EXIT
     turn_on_water
     sleep "${time}"
     # turn_off_water # turn off will be caught by the exit trap.
@@ -85,8 +95,10 @@ Example: water 75
 EOF
 }
 
-# Trap signals to ensure water is turned off
-trap clean_up EXIT
+# NOTE: the EXIT trap is armed only inside water_for_time's fallback branch.
+# Arming it globally made every delegated run cancel itself: /pump/run
+# returns immediately, the script exits, the trap fires, and /pump/off
+# cancels the run a second after it started (seen at 12:00 today).
 
 # Main logic
 main() {
